@@ -1,0 +1,451 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RNA–RBP Agent Tool Interface Schemas (LOCKED)",
+  "version": "1.0.0",
+  "locked_date": "2026-07-15",
+  "proposal_ref": "rna_rbp_agent_proposal.pdf §5 Tool Interface Specification",
+  "milestone": "Wk1 — Lock tool interface schemas",
+  "status": "LOCKED",
+  "change_policy": "Breaking changes require version bump + dual owner sign-off. Additive optional fields allowed only under properties with defaults.",
+
+  "shared_conventions": {
+    "ids": "All proteins addressed by UniProt accession (e.g. P09651, Q9NY61).",
+    "caching": "Long-running tools (predict_structure, literature_search, struct_similarity AFDB) memoised on (tool, key) with configurable TTL.",
+    "concurrency": {
+      "read_only": true,
+      "concurrency_safe": true
+    },
+    "error_envelope": {
+      "description": "Failures MUST return envelope rather than raising into the agent.",
+      "success": {
+        "type": "object",
+        "required": ["status", "value", "latency_ms"],
+        "properties": {
+          "status": { "const": "ok" },
+          "value": {},
+          "latency_ms": { "type": "number", "minimum": 0 }
+        },
+        "additionalProperties": false
+      },
+      "error": {
+        "type": "object",
+        "required": ["status", "reason", "latency_ms"],
+        "properties": {
+          "status": { "const": "error" },
+          "reason": { "type": "string", "minLength": 1 },
+          "latency_ms": { "type": "number", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "transport": "nanobot Tool.execute returns JSON string of the envelope; ToolRegistry validates parameters against parameters JSON Schema."
+  },
+
+  "tools": [
+    {
+      "priority": "P0",
+      "name": "predict_interaction",
+      "purpose": "Core classifier fθ(RNA, RBP); catalogue K only.",
+      "read_only": true,
+      "concurrency_safe": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "rna": {
+            "type": "string",
+            "description": "RNA sequence (A/U/G/C; T accepted as U).",
+            "minLength": 1
+          },
+          "rbp_id": {
+            "type": "string",
+            "description": "UniProt accession; must be in catalogue K for direct prediction.",
+            "minLength": 1
+          }
+        },
+        "required": ["rna", "rbp_id"],
+        "additionalProperties": false
+      },
+      "value_schema": {
+        "type": "object",
+        "required": ["rbp_id", "prob", "confidence"],
+        "properties": {
+          "rbp_id": { "type": "string" },
+          "prob": { "type": "number", "minimum": 0, "maximum": 1 },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "feature_attribution": {
+            "type": "object",
+            "description": "Optional; used for explanation.",
+            "additionalProperties": true
+          },
+          "in_catalogue": { "type": "boolean" }
+        }
+      }
+    },
+    {
+      "priority": "P0",
+      "name": "get_known_rbp_list",
+      "purpose": "Return catalogue K with metadata.",
+      "read_only": true,
+      "concurrency_safe": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "include_sequences": {
+            "type": "boolean",
+            "description": "If true, include amino-acid sequences (large payload).",
+            "default": false
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "value_schema": {
+        "type": "object",
+        "required": ["count", "rbps"],
+        "properties": {
+          "count": { "type": "integer", "minimum": 0 },
+          "rbps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["uniprot_id", "name"],
+              "properties": {
+                "uniprot_id": { "type": "string" },
+                "name": { "type": "string" },
+                "seq_len": { "type": "integer" },
+                "domains": { "type": "array", "items": { "type": "string" } },
+                "go_terms": { "type": "array", "items": { "type": "string" } },
+                "function": { "type": "string" },
+                "family": { "type": "string" },
+                "has_structure": { "type": "boolean" },
+                "sequence": { "type": "string", "description": "Only if include_sequences=true" }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": "P0",
+      "name": "seq_similarity",
+      "purpose": "Sequence-view similarity (BLASTp + ESM-cosine) vs catalogue; top-K + scores.",
+      "read_only": true,
+      "concurrency_safe": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_sequence": {
+            "type": "string",
+            "description": "Amino-acid sequence of query RBP p*."
+          },
+          "target_uniprot": {
+            "type": "string",
+            "description": "Optional UniProt ID if sequence is already in catalogue."
+          },
+          "candidates": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional subset of UniProt IDs to score against."
+          },
+          "top_k": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "anyOf_note": "At least one of target_sequence or resolvable target_uniprot is required at runtime."
+      },
+      "value_schema": {
+        "type": "object",
+        "required": ["top_k", "hits"],
+        "properties": {
+          "top_k": { "type": "integer" },
+          "hits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["rbp_id", "score"],
+              "properties": {
+                "rbp_id": { "type": "string" },
+                "name": { "type": "string" },
+                "identity": { "type": "number", "minimum": 0, "maximum": 1 },
+                "esm_cosine": { "type": "number" },
+                "score": { "type": "number", "minimum": 0, "maximum": 1 },
+                "blast_evalue": { "type": ["number", "null"] },
+                "blast_bitscore": { "type": ["number", "null"] },
+                "method": {
+                  "type": "string",
+                  "description": "blastp | esm | blastp+esm"
+                }
+              }
+            }
+          },
+          "backends": { "type": "object" },
+          "warnings": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    {
+      "priority": "P1",
+      "name": "struct_similarity",
+      "purpose": "Structure-view similarity (USalign TM-scores) vs catalogue structures.",
+      "read_only": true,
+      "concurrency_safe": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_sequence": { "type": "string" },
+          "target_uniprot": { "type": "string" },
+          "target_structure_path": {
+            "type": "string",
+            "description": "Optional path to AF3/PDB structure for the target."
+          },
+          "candidates": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "top_k": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "value_schema": {
+        "type": "object",
+        "required": ["top_k", "hits"],
+        "properties": {
+          "top_k": { "type": "integer" },
+          "hits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["rbp_id", "tm_score", "score"],
+              "properties": {
+                "rbp_id": { "type": "string" },
+                "name": { "type": "string" },
+                "tm_score": { "type": "number", "minimum": 0, "maximum": 1 },
+                "score": { "type": "number", "minimum": 0, "maximum": 1 },
+                "method": { "type": "string" },
+                "catalogue_has_structure": { "type": "boolean" },
+                "catalogue_structure": { "type": "string" }
+              }
+            }
+          },
+          "target_structure_available": { "type": "boolean" },
+          "query_structure": { "type": "string" },
+          "query_method": { "type": "string" },
+          "fallback": { "type": "boolean" },
+          "warnings": { "type": "array", "items": { "type": "string" } },
+          "backends": { "type": "object" }
+        }
+      }
+    },
+    {
+      "priority": "P1",
+      "name": "get_func_annotation",
+      "purpose": "UniProt/PDB-style free-text annotation (domains, GO, function).",
+      "read_only": true,
+      "concurrency_safe": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "rbp_id": {
+            "type": "string",
+            "description": "UniProt accession."
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional gene/protein name (novel RBP)."
+          },
+          "domains": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional domains if known for a novel RBP."
+          },
+          "function": {
+            "type": "string",
+            "description": "Optional free-text function for a novel RBP."
+          },
+          "go_terms": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["rbp_id"],
+        "additionalProperties": false
+      },
+      "value_schema": {
+        "type": "object",
+        "required": ["rbp_id", "name", "domains", "go_terms", "function", "source"],
+        "properties": {
+          "rbp_id": { "type": "string" },
+          "name": { "type": "string" },
+          "family": { "type": "string" },
+          "domains": { "type": "array", "items": { "type": "string" } },
+          "go_terms": { "type": "array", "items": { "type": "string" } },
+          "function": { "type": "string" },
+          "source": {
+            "type": "string",
+            "enum": ["catalogue", "query_supplied"]
+          }
+        }
+      }
+    },
+    {
+      "priority": "P2",
+      "name": "predict_structure",
+      "purpose": "AF3/ESMFold/AFDB structure for novel or missing structures; memoised.",
+      "read_only": true,
+      "concurrency_safe": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sequence": {
+            "type": "string",
+            "description": "Amino-acid sequence of p*."
+          },
+          "uniprot_id": { "type": "string" },
+          "timeout_s": {
+            "type": "number",
+            "default": 120,
+            "minimum": 1
+          },
+          "method": {
+            "type": "string",
+            "description": "auto | af3 | esmfold | afdb",
+            "default": "auto"
+          }
+        },
+        "required": ["sequence"],
+        "additionalProperties": false
+      },
+      "value_schema": {
+        "type": "object",
+        "required": ["structure_path", "method", "seq_len"],
+        "properties": {
+          "structure_path": { "type": "string" },
+          "method": { "type": "string" },
+          "seq_len": { "type": "integer", "minimum": 0 },
+          "uniprot_id": { "type": "string" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    {
+      "priority": "P2",
+      "name": "literature_search",
+      "purpose": "Top-k abstracts to augment function annotation.",
+      "read_only": true,
+      "concurrency_safe": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "rbp_name": { "type": "string" },
+          "top_k": {
+            "type": "integer",
+            "default": 3,
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "required": ["rbp_name"],
+        "additionalProperties": false
+      },
+      "value_schema": {
+        "type": "object",
+        "required": ["rbp_name", "abstracts"],
+        "properties": {
+          "rbp_name": { "type": "string" },
+          "abstracts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["title", "abstract"],
+              "properties": {
+                "title": { "type": "string" },
+                "abstract": { "type": "string" },
+                "source": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+
+  "agent_outputs": {
+    "proxy_candidate": {
+      "description": "Stage 1 LLM-fusion output element (proposal §4)",
+      "type": "object",
+      "required": ["rbp_id", "similarity_score", "similarity_breakdown", "rationale"],
+      "properties": {
+        "rbp_id": { "type": "string" },
+        "similarity_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "similarity_breakdown": {
+          "type": "object",
+          "required": ["seq", "struct", "func"],
+          "properties": {
+            "seq": { "type": "number" },
+            "struct": { "type": "number" },
+            "func": { "type": "number" }
+          }
+        },
+        "rationale": { "type": "string" },
+        "name": { "type": "string" }
+      }
+    },
+    "verdict": {
+      "description": "Final structured verdict V (proposal §2)",
+      "type": "object",
+      "required": ["label", "p_hat", "confidence", "explanation", "supporting_rbps"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "enum": ["Strong", "Likely", "Unlikely", "No"]
+        },
+        "p_hat": { "type": "number", "minimum": 0, "maximum": 1 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "explanation": { "type": "string", "minLength": 1 },
+        "supporting_rbps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["rbp_id", "prob", "confidence", "similarity_score"],
+            "properties": {
+              "rbp_id": { "type": "string" },
+              "prob": { "type": "number" },
+              "confidence": { "type": "number" },
+              "similarity_score": { "type": "number" },
+              "rationale": { "type": "string" },
+              "feature_attribution": { "type": "object" }
+            }
+          }
+        },
+        "path": {
+          "type": "string",
+          "enum": ["fast", "near_fast", "proxy", "error"]
+        },
+        "caveats": { "type": "array", "items": { "type": "string" } },
+        "meta": { "type": "object" }
+      }
+    }
+  },
+
+  "defaults_locked_with_schemas": {
+    "n_cand": 5,
+    "tau_drop": 0.30,
+    "fast_path_identity": 0.95,
+    "label_thresholds": {
+      "strong": 0.75,
+      "likely": 0.50,
+      "unlikely": 0.25
+    }
+  }
+}

@@ -1,0 +1,149 @@
+# -*- coding: utf-8 -*-
+"""Proposal §7.5 — promote frequent (p* → proxies) mappings to a fast cache.
+
+When a target repeatedly resolves to the same donor set, Stage 1 can be
+bypassed on subsequent queries (agent reads this cache before multi-view retrieval).
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from collections import Counter
+from pathlib import Path
+from typing import Any, Optional
+
+DEFAULT_CACHE = Path(__file__).resolve().parent / "cache" / "proxy_map.json"
+
+
+def load_proxy_cache(path: Optional[Path] = None) -> dict[str, Any]:
+    p = Path(path or DEFAULT_CACHE)
+    if not p.is_file():
+        return {"version": 1, "entries": {}, "stats": {}}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"version": 1, "entries": {}, "stats": {}}
+
+
+def save_proxy_cache(data: dict[str, Any], path: Optional[Path] = None) -> Path:
+    p = Path(path or DEFAULT_CACHE)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return p
+
+
+def cache_key(uniprot: Optional[str], alias: Optional[str]) -> str:
+    if uniprot:
+        return f"up:{uniprot}"
+    if alias:
+        return f"alias:{alias}"
+    return ""
+
+
+def lookup_proxies(
+    *,
+    uniprot: Optional[str] = None,
+    alias: Optional[str] = None,
+    path: Optional[Path] = None,
+    min_hits: int = 2,
+) -> Optional[list[dict[str, Any]]]:
+    """Return promoted proxy list if cache entry is strong enough."""
+    data = load_proxy_cache(path)
+    key = cache_key(uniprot, alias)
+    if not key:
+        return None
+    ent = (data.get("entries") or {}).get(key)
+    if not ent:
+        return None
+    if int(ent.get("hits") or 0) < min_hits:
+        return None
+    if not ent.get("promoted"):
+        return None
+    return list(ent.get("proxies") or [])
+
+
+def record_mapping(
+    *,
+    uniprot: Optional[str],
+    alias: Optional[str],
+    proxies: list[dict[str, Any]],
+    path: Optional[Path] = None,
+    promote_after: int = 3,
+) -> dict[str, Any]:
+    """Update hit counts; promote when seen ≥ promote_after times with same top donors."""
+    data = load_proxy_cache(path)
+    key = cache_key(uniprot, alias)
+    if not key:
+        return data
+    entries = data.setdefault("entries", {})
+    ent = entries.get(key) or {
+        "uniprot": uniprot,
+        "alias": alias,
+        "hits": 0,
+        "proxies": [],
+        "promoted": False,
+        "history": [],
+    }
+    # signature = ordered top aliases
+    sig = tuple(
+        (p.get("alias") or p.get("rbp_id") or "")
+        for p in proxies[:5]
+        if (p.get("alias") or p.get("rbp_id"))
+    )
+    hist = ent.setdefault("history", [])
+    hist.append({"sig": list(sig), "t": time.time()})
+    hist[:] = hist[-20:]  # keep last 20
+    ent["hits"] = int(ent.get("hits") or 0) + 1
+
+    # majority signature among recent history
+    ctr: Counter[tuple] = Counter(tuple(h["sig"]) for h in hist if h.get("sig"))
+    if ctr:
+        best_sig, best_n = ctr.most_common(1)[0]
+        if best_n >= promote_after and best_sig:
+            ent["proxies"] = [{"alias": a} for a in best_sig if a]
+            ent["promoted"] = True
+            ent["promoted_count"] = best_n
+        elif not ent.get("promoted"):
+            ent["proxies"] = [{"alias": a} for a in sig if a]
+
+    entries[key] = ent
+    data["stats"] = {
+        "n_entries": len(entries),
+        "n_promoted": sum(1 for e in entries.values() if e.get("promoted")),
+    }
+    save_proxy_cache(data, path)
+    return data
+
+
+def promote_from_traces(
+    traces: list[dict[str, Any]],
+    *,
+    path: Optional[Path] = None,
+    promote_after: int = 3,
+) -> dict[str, Any]:
+    """Scan query_end traces and promote repeated donor sets."""
+    data = load_proxy_cache(path)
+    for row in traces:
+        if row.get("type") not in ("query_end", "fallback_end", "agent_result"):
+            continue
+        q = row.get("query") or row.get("target") or {}
+        if isinstance(q, str):
+            q = {"raw": q}
+        uniprot = q.get("uniprot") or row.get("uniprot")
+        alias = q.get("alias") or row.get("alias")
+        donors = row.get("donors") or row.get("supporting_rbps") or []
+        if not donors:
+            v = row.get("verdict") or {}
+            donors = v.get("supporting_rbps") or []
+        if not donors:
+            continue
+        record_mapping(
+            uniprot=uniprot,
+            alias=alias,
+            proxies=donors if isinstance(donors, list) else [],
+            path=path,
+            promote_after=promote_after,
+        )
+    return load_proxy_cache(path)

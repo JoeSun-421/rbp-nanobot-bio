@@ -1,0 +1,15 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "/REPLACE/WITH/BIO_ROOT/nanobot-bio/workspace",
+      "model": "gpt-4o-mini",
+      "provider": "openai"
+    }
+  },
+  "providers": {
+    "openai": {
+      "api_key": "REPLACE_WITH_SERVER_SECRET_OR_ENV",
+      "api_base": "https://api.openai.com/v1"
+    }
+  }
+}

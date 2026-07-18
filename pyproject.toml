@@ -1,0 +1,39 @@
+[project]
+name = "nanobot-bio"
+version = "0.1.0"
+description = "RNA–RBP agent: nanobot + rhobind_agent_delivery tools"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pyyaml>=6.0",
+  "pydantic>=2.0",
+  "numpy>=1.24",
+  "loguru>=0.7",
+  "typer>=0.12",
+  "rich>=13",
+  "questionary>=2",
+  "prompt_toolkit>=3.0",
+  "openai>=1.0",
+  "dulwich>=0.21",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+rbp-agent = "cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["cli", "integrate"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backends*", "core*", "rbp_eval*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

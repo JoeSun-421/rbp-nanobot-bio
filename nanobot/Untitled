@@ -1,0 +1,1 @@
+scp -P 16725 -r  "C:\Users\Joe Sun\Desktop\scientist agent\nanobot" root@connect.weste.seetacloud.com:/root/autodl-tmp/bio_agent/nanobot

@@ -1,0 +1,11 @@
+pyyaml>=6.0
+pydantic>=2.0
+numpy>=1.24
+loguru>=0.7
+pytest>=7.0
+typer>=0.12
+rich>=13
+questionary>=2
+prompt_toolkit>=3.0
+openai>=1.0
+dulwich>=0.21

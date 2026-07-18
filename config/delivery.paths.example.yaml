@@ -1,0 +1,26 @@
+# Example path table. Prefer environment variables from delivery setup.sh.
+# Copy to delivery.paths.yaml (gitignored) only if you must hardcode.
+
+delivery_root: "../rhobind_agent_delivery"
+
+# Relative to delivery_root unless absolute
+paths:
+  setup_sh: "agent/setup.sh"
+  tools_root: "agent/tools"
+  registry_json: "agent/tools/registry.json"
+  predict_api: "agent/backbone/predict_api.py"
+  agent_db: "agent_db"
+  rbp_registry: "agent_db/registry/rbp_registry.json"
+  rhobind_release: "release/rhobind_release_v1"
+  reference: "reference"
+  examples: "agent/examples"
+
+# Conda envs (delivery AGENT_BUILD_SPEC §3)
+tool_envs:
+  esm_similarity: protein_embed
+  esm_embed: protein_embed
+  struct_similarity_foldseek: protein_embed
+  protein_seq_similarity: rna
+  rna_blastn: rna
+  rhobind_predict: rhobind
+  structure_predict_af3: af3
