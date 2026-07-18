@@ -15,5 +15,9 @@ workspace/memory/*
 dist/
 build/
 .cursor/
+.idea/
+**/.idea/
 *.log
 rbp_eval/cache/
+workspace/.nanobot/
+nanobot/Untitled
