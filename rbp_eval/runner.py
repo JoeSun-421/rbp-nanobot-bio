@@ -67,7 +67,7 @@ def run_batch(
     *,
     trace_path: str | Path = "rbp_eval/traces/eval_run.jsonl",
     offline: bool = True,
-    device: str = "cpu",
+    device: str = "auto",
     config: Optional[dict[str, Any]] = None,
     use_evolved_config: bool = True,
 ) -> list[dict[str, Any]]:

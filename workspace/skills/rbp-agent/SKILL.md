@@ -52,8 +52,9 @@ Transfer defaults: `N_cand ≤ 5`, drop proxies with fused similarity `< 0.30`.
 
 ### P0
 - `get_known_rbp_list` — catalogue K
-- `seq_similarity` — ESM-C primary (`encoder=esmc`)
-- `predict_interaction` — RhoBind heads; `rna` + `rbp_id`/`rbps` + `cohort`
+- `seq_similarity` — ESM-C primary (`encoder=esmc`); `device=auto` (prefer CUDA)
+- `predict_interaction` — RhoBind heads; `rna` + `rbp_id`/`rbps` + `cohort`;
+  omit `device` or use `auto` so CUDA is used when available (HANDOFF)
 
 ### P1
 - `struct_similarity` — foldseek (+ USalign); need `pdb_path` or `uniprot`

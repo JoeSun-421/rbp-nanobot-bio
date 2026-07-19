@@ -2,7 +2,10 @@
 """LLM setup for the RNA–RBP agent.
 
 Writes provider + API key + model into ``~/.nanobot/config.json`` using
-nanobot's provider registry/schema — without nanobot's onboarding wizard.
+nanobot's provider registry — the same config ``Nanobot.from_config`` loads.
+
+Users pick a **vendor** then a **model** (curated 2026 mainstream IDs, or type
+any model id the vendor accepts).
 """
 
 from __future__ import annotations
@@ -17,17 +20,106 @@ DEFAULT_CONFIG = Path(
     os.environ.get("NANOBOT_CONFIG", "~/.nanobot/config.json")
 ).expanduser()
 
-FEATURED: tuple[tuple[str, str], ...] = (
-    ("deepseek", "deepseek-chat"),
-    ("openai", "gpt-4o-mini"),
-    ("anthropic", "claude-3-5-sonnet-latest"),
-    ("openrouter", "anthropic/claude-3.5-sonnet"),
-    ("gemini", "gemini-1.5-flash"),
-    ("dashscope", "qwen-plus"),
-    ("zhipu", "glm-4-flash"),
-    ("moonshot", "kimi-latest"),
-    ("siliconflow", "deepseek-ai/DeepSeek-V3"),
+# Curated model catalogs (API model ids). Order = picker order.
+# Vendors map to nanobot ``providers.<name>`` registry keys.
+PROVIDER_MODELS: dict[str, tuple[str, ...]] = {
+    "openai": (
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-4.1",
+        "gpt-4o",
+        "o3",
+        "o4-mini",
+    ),
+    "anthropic": (
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5",
+        "claude-opus-4-5",
+        "claude-sonnet-4-5",
+    ),
+    "deepseek": (
+        "deepseek-chat",
+        "deepseek-reasoner",
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+    ),
+    "gemini": (
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-3.1-pro-preview",
+        "gemini-3-flash-preview",
+        "gemini-2.0-flash",
+    ),
+    "dashscope": (
+        "qwen-max",
+        "qwen-plus",
+        "qwen-turbo",
+        "qwen3-max",
+        "qwen3-plus",
+    ),
+    "zhipu": (
+        "glm-5",
+        "glm-4.6",
+        "glm-4.5",
+        "glm-4-flash",
+    ),
+    "moonshot": (
+        "kimi-k2.5",
+        "kimi-k2.6",
+        "kimi-latest",
+        "moonshot-v1-128k",
+    ),
+    "mistral": (
+        "mistral-large-latest",
+        "mistral-medium-latest",
+        "magistral-medium-latest",
+        "codestral-latest",
+    ),
+    "minimax": (
+        "MiniMax-M2",
+        "MiniMax-Text-01",
+    ),
+    "openrouter": (
+        "anthropic/claude-sonnet-4.5",
+        "openai/gpt-4o",
+        "google/gemini-2.5-pro",
+        "deepseek/deepseek-chat",
+        "qwen/qwen3-max",
+    ),
+    "groq": (
+        "llama-3.3-70b-versatile",
+        "openai/gpt-oss-120b",
+        "qwen/qwen3-32b",
+    ),
+    "siliconflow": (
+        "deepseek-ai/DeepSeek-V3",
+        "Qwen/Qwen3-235B-A22B",
+        "moonshotai/Kimi-K2-Instruct",
+    ),
+}
+
+# Featured vendors shown in the interactive picker (nanobot registry names).
+FEATURED: tuple[tuple[str, str], ...] = tuple(
+    (name, models[0]) for name, models in PROVIDER_MODELS.items()
 )
+
+_OTHER_MODEL = "__other__"
+
+
+def models_for(provider: str) -> tuple[str, ...]:
+    return PROVIDER_MODELS.get(provider, ())
+
+
+def list_models_text() -> str:
+    lines = ["Curated LLM vendors → models (type any id the vendor accepts):", ""]
+    for name, models in PROVIDER_MODELS.items():
+        lines.append(f"  {_display_name(name)}  [{name}]")
+        for m in models:
+            lines.append(f"    - {m}")
+        lines.append("")
+    lines.append("  Custom  [custom]  — any OpenAI-compatible base URL + model id")
+    return "\n".join(lines)
 
 
 def _display_name(name: str) -> str:
@@ -39,7 +131,22 @@ def _display_name(name: str) -> str:
             return spec.label
     except Exception:
         pass
-    return name.title()
+    labels = {
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+        "deepseek": "DeepSeek",
+        "gemini": "Google Gemini",
+        "dashscope": "Alibaba Qwen",
+        "zhipu": "Zhipu GLM",
+        "moonshot": "Moonshot Kimi",
+        "mistral": "Mistral",
+        "minimax": "MiniMax",
+        "openrouter": "OpenRouter",
+        "groq": "Groq",
+        "siliconflow": "SiliconFlow",
+        "custom": "Custom",
+    }
+    return labels.get(name, name.title())
 
 
 def _needs_api_base(name: str) -> bool:
@@ -112,18 +219,64 @@ def _print_login_banner() -> None:
         return
     print_banner(
         "RNA–RBP Agent",
-        "LLM login  ·  credentials → ~/.nanobot/config.json",
+        "LLM login  ·  pick vendor + model  ·  → ~/.nanobot/config.json",
         stream=sys.stderr,
     )
     s = Style(sys.stderr)
     sys.stderr.write(
-        s.dim("  Choose a provider, then enter model + API key (key is hidden).\n\n")
+        s.dim(
+            "  Nanobot.from_config reads this file. Choose any supported vendor;\n"
+            "  then pick a model (or type a custom model id).\n\n"
+        )
     )
     sys.stderr.flush()
 
 
+def _pick_model_interactive(
+    provider: str,
+    default_model: str,
+    *,
+    questionary,
+    qstyle,
+) -> Optional[str]:
+    """Second-step model picker for a vendor."""
+    catalog = list(models_for(provider))
+    if not catalog:
+        model = questionary.text(
+            "Model id",
+            default=default_model or "",
+            qmark="▸",
+            style=qstyle,
+        ).ask()
+        return (model or "").strip() or None
+
+    choices = [questionary.Choice(title=m, value=m) for m in catalog]
+    choices.append(
+        questionary.Choice(title="Other… (type model id)", value=_OTHER_MODEL)
+    )
+    picked = questionary.select(
+        f"Model for {_display_name(provider)}",
+        choices=choices,
+        qmark="▸",
+        style=qstyle,
+        instruction="(↑/↓, Enter)",
+        default=default_model if default_model in catalog else catalog[0],
+    ).ask()
+    if picked is None:
+        return None
+    if picked == _OTHER_MODEL:
+        model = questionary.text(
+            "Model id",
+            default=default_model or catalog[0],
+            qmark="▸",
+            style=qstyle,
+        ).ask()
+        return (model or "").strip() or None
+    return str(picked).strip()
+
+
 def interactive_onboard(path: Path = DEFAULT_CONFIG) -> bool:
-    """Arrow-key provider picker + hidden key entry. Falls back to plain input."""
+    """Arrow-key provider + model picker + hidden key entry."""
     _print_login_banner()
     try:
         import questionary
@@ -149,12 +302,15 @@ def interactive_onboard(path: Path = DEFAULT_CONFIG) -> bool:
     )
 
     choices = [
-        questionary.Choice(title=f"{_display_name(n):<14}  {dm}", value=(n, dm))
+        questionary.Choice(
+            title=f"{_display_name(n):<16}  {dm}",
+            value=(n, dm),
+        )
         for n, dm in FEATURED
     ]
     choices.append(
         questionary.Choice(
-            title=f"{'Custom':<14}  OpenAI-compatible endpoint",
+            title=f"{'Custom':<16}  OpenAI-compatible endpoint",
             value=("custom", ""),
         )
     )
@@ -181,12 +337,9 @@ def interactive_onboard(path: Path = DEFAULT_CONFIG) -> bool:
             print("aborted: custom provider needs an API base URL")
             return False
 
-    model = questionary.text(
-        "Model",
-        default=default_model,
-        qmark="▸",
-        style=qstyle,
-    ).ask()
+    model = _pick_model_interactive(
+        provider, default_model, questionary=questionary, qstyle=qstyle
+    )
     if not model:
         print("aborted: model is required")
         return False
@@ -201,7 +354,7 @@ def interactive_onboard(path: Path = DEFAULT_CONFIG) -> bool:
 
     save_provider(
         provider=provider,
-        model=model.strip(),
+        model=model,
         api_key=api_key.strip() or None,
         api_base=(api_base or "").strip() or None,
         path=path,
@@ -214,12 +367,12 @@ def interactive_onboard(path: Path = DEFAULT_CONFIG) -> bool:
             "\n"
             + s.green("✓ saved")
             + f"  {path}\n"
-            + f"  {s.bold(provider)} · {model.strip()}\n"
-            + s.dim("  Next:  rbp-agent chat\n\n")
+            + f"  {s.bold(provider)} · {model}\n"
+            + s.dim("  Next:  rbp-agent chat   (Nanobot.from_config → Nanobot.run)\n\n")
         )
         sys.stderr.flush()
     except Exception:
-        print(f"saved → {path}  [{provider} · {model.strip()}]")
+        print(f"saved → {path}  [{provider} · {model}]")
     return True
 
 
@@ -227,7 +380,7 @@ def _plain_onboard(path: Path) -> bool:
     """Non-TTY fallback: numbered menu with plain prompts."""
     print("Select an LLM provider:")
     for i, (n, dm) in enumerate(FEATURED, 1):
-        print(f"  {i}. {_display_name(n)}  ({dm})")
+        print(f"  {i}. {_display_name(n)}  (default {dm})")
     print(f"  {len(FEATURED) + 1}. Custom (OpenAI-compatible)")
     raw = input("number › ").strip()
     try:
@@ -248,7 +401,31 @@ def _plain_onboard(path: Path) -> bool:
         print("aborted: out of range")
         return False
 
-    model = input(f"model [{default_model}] › ").strip() or default_model
+    catalog = list(models_for(provider))
+    if catalog:
+        print(f"Models for {_display_name(provider)}:")
+        for i, m in enumerate(catalog, 1):
+            print(f"  {i}. {m}")
+        print(f"  {len(catalog) + 1}. Other (type id)")
+        mraw = input(f"model number [{default_model}] › ").strip()
+        if not mraw:
+            model = default_model
+        else:
+            try:
+                mi = int(mraw)
+            except ValueError:
+                model = mraw  # typed id directly
+            else:
+                if 1 <= mi <= len(catalog):
+                    model = catalog[mi - 1]
+                elif mi == len(catalog) + 1:
+                    model = input("model id › ").strip()
+                else:
+                    print("aborted: out of range")
+                    return False
+    else:
+        model = input(f"model [{default_model}] › ").strip() or default_model
+
     if not model:
         print("aborted: model required")
         return False

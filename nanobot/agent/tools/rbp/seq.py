@@ -8,7 +8,14 @@ from typing import Any
 
 from nanobot.agent.tools.base import Tool, tool_parameters
 
-from nanobot.agent.tools.rbp.common import dumps, err, get_delivery_client, ok, timed_call
+from nanobot.agent.tools.rbp.common import (
+    dumps,
+    err,
+    get_delivery_client,
+    ok,
+    resolve_device,
+    timed_call,
+)
 
 
 @tool_parameters(
@@ -19,7 +26,12 @@ from nanobot.agent.tools.rbp.common import dumps, err, get_delivery_client, ok, 
             "target_sequence": {"type": "string"},
             "uniprot": {"type": "string"},
             "encoder": {"type": "string", "default": "esmc"},
-            "device": {"type": "string", "default": "cpu"},
+            "device": {
+                "type": "string",
+                "enum": ["auto", "cuda", "cpu"],
+                "default": "auto",
+                "description": "Prefer cuda when available (ESM-C / HANDOFF)",
+            },
             "top_k": {"type": "integer", "default": 10},
             "also_mmseqs": {"type": "boolean", "default": False},
         },
@@ -51,7 +63,8 @@ class SeqSimilarityTool(Tool):
             return dumps(err("sequence or target_sequence required"))
 
         def _run():
-            client = get_delivery_client(device=kwargs.get("device") or "cpu")
+            device = resolve_device(kwargs.get("device"))
+            client = get_delivery_client(device=device)
             hits = []
             meta = {}
             esm = client.call(
@@ -59,7 +72,7 @@ class SeqSimilarityTool(Tool):
                 {
                     "sequence": seq,
                     "encoder": kwargs.get("encoder") or "esmc",
-                    "device": kwargs.get("device") or "cpu",
+                    "device": device,
                     "top_k": int(kwargs.get("top_k") or 10),
                     "uniprot": kwargs.get("uniprot"),
                 },

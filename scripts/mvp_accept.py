@@ -107,6 +107,23 @@ def main() -> int:
     else:
         c.fail("missing rbp_eval pieces")
 
+    c = add("A", "§6.2 overlay has no nested framework")
+    forbidden = ("providers", "channels", "webui", "__init__.py", "nanobot.py")
+    bad = [n for n in forbidden if (ROOT / "nanobot" / n).exists()]
+    if bad:
+        c.fail(f"overlay still has framework paths: {bad}")
+    else:
+        try:
+            import nanobot as _nb
+
+            _f = str(getattr(_nb, "__file__", "") or "").replace("\\", "/")
+            if "nanobot-bio/" in _f:
+                c.fail(f"import nanobot shadowed by overlay: {_f}")
+            else:
+                c.pass_(_f)
+        except Exception as e:
+            c.fail(str(e))
+
     c = add("A", "integrate.RBPAgent")
     try:
         from integrate import RBPAgent, skill_path

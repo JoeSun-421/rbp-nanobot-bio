@@ -31,7 +31,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIO_ROOT="$(cd "${BIO_ROOT:-$AGENT_ROOT/..}" && pwd)"
 DELIVERY_ROOT="${DELIVERY_ROOT:-$BIO_ROOT/rhobind_agent_delivery}"
-NANOBOT_SRC="${NANOBOT_SRC:-$AGENT_ROOT/nanobot}"
+NANOBOT_SRC="${NANOBOT_SRC:-$BIO_ROOT/nanobot}"
 
 echo "=============================================="
 echo " nanobot-bio setup (Linux / proposal nanobot)"
@@ -181,7 +181,7 @@ PEAKS_DB=${PEAKS_DB:-$DELIVERY_ROOT/agent_db/peaks_db/peaks}
 USALIGN=${USALIGN:-$DELIVERY_ROOT/agent_db/bin/USalign}
 AF3_DIR=${AF3_DIR:-$DELIVERY_ROOT/agent/third_party/alphafold3}
 AF3_PARAMS=${AF3_PARAMS:-$DELIVERY_ROOT/af3_assets/alphafold_param}
-RHOBIND_DEVICE=${RHOBIND_DEVICE:-cpu}
+RHOBIND_DEVICE=${RHOBIND_DEVICE:-auto}
 RBP_BACKEND=delivery
 EOF
 

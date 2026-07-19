@@ -521,13 +521,18 @@ def cgroup_memory_gb() -> Optional[float]:
 
 
 def memory_blocker_message(min_gb: float = 8.0) -> Optional[str]:
-    """If the container cannot run RhoBind, return a clear user-facing warning."""
+    """Advisory only: ideal GPU host needs enough RAM for RhoBind / ESM.
+
+    Does not change agent behaviour or force CPU — product path still prefers
+    CUDA via ``RHOBIND_DEVICE=auto``. Raise the cgroup / instance size before
+    claiming scientific goldens.
+    """
     gb = cgroup_memory_gb()
     if gb is not None and gb < min_gb:
         return (
-            f"WARNING: cgroup memory limit ≈ {gb:.1f} GiB "
-            f"(need ≥ {min_gb:.0f} GiB for RhoBind). "
-            "predict_interaction will OOM (rc=137); agent can still annotate "
-            "but p_hat stays null. Raise instance memory / remove the cgroup cap."
+            f"NOTE: cgroup memory.max ≈ {gb:.1f} GiB "
+            f"(ideal env ≥ {min_gb:.0f} GiB RAM + CUDA for RhoBind/ESM). "
+            "This host may OOM science tools (rc=137) → p_hat stays null "
+            "(never invent scores). Upgrade instance for acceptance runs."
         )
     return None

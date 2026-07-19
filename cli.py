@@ -24,16 +24,19 @@ from pathlib import Path
 from typing import Optional
 
 ROOT = Path(__file__).resolve().parent
-BIO_ROOT = ROOT.parent
+BIO_ROOT = Path(os.environ.get("BIO_ROOT", ROOT.parent)).expanduser().resolve()
+os.environ.setdefault("BIO_ROOT", str(BIO_ROOT))
+os.environ.setdefault("NANOBOT_BIO_ROOT", str(ROOT))
+os.environ.setdefault("NANOBOT_SRC", str(BIO_ROOT / "nanobot"))
 
-# Prefer nested nanobot package (ROOT/nanobot)
-_rt = str(ROOT)
-while _rt in sys.path:
-    sys.path.remove(_rt)
-sys.path.insert(0, _rt)
+# Sibling nanobot runtime first, then agent package (see activate_env.sh)
 _br = str(BIO_ROOT)
-if _br in sys.path:
-    sys.path.remove(_br)
+_rt = str(ROOT)
+for _p in (_br, _rt):
+    while _p in sys.path:
+        sys.path.remove(_p)
+sys.path.insert(0, _br)
+sys.path.insert(1, _rt)
 
 
 def _read_fasta(path: Path) -> str:
@@ -115,9 +118,14 @@ def cmd_onboard(args: argparse.Namespace) -> int:
     from core.onboard import (
         current_summary,
         interactive_onboard,
+        list_models_text,
         save_provider,
         DEFAULT_CONFIG,
     )
+
+    if getattr(args, "list_models", False):
+        print(list_models_text())
+        return 0
 
     if getattr(args, "show", False):
         print(current_summary())
@@ -128,6 +136,7 @@ def cmd_onboard(args: argparse.Namespace) -> int:
         model = getattr(args, "model", None)
         if not model:
             print("--model is required with --provider", file=sys.stderr)
+            print("Tip: rbp-agent onboard --list-models", file=sys.stderr)
             return 2
         save_provider(
             provider=provider,
@@ -256,7 +265,7 @@ def cmd_agent(args: argparse.Namespace) -> int:
 
     agent = RBPAgent(
         offline=False,
-        device=args.device or "cpu",
+        device=args.device or "auto",
         use_conda=True,
         prefer_nanobot_llm=True,
         allow_fallback=False,
@@ -331,7 +340,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         return 1
 
     session_key = getattr(args, "session_key", None) or f"chat-{os.getpid()}"
-    device = getattr(args, "device", None) or "cpu"
+    device = getattr(args, "device", None) or "auto"
     trace = ROOT / "rbp_eval" / "traces" / "cli_chat.jsonl"
 
     agent = RBPAgent(
@@ -437,11 +446,20 @@ def build_parser() -> argparse.ArgumentParser:
     d.set_defaults(func=cmd_doctor)
 
     o = sub.add_parser("onboard", help="Configure LLM provider + API key + model")
-    o.add_argument("--provider", default=None, help="Non-interactive: registry name (e.g. deepseek)")
-    o.add_argument("--model", default=None, help="Model name (required with --provider)")
+    o.add_argument(
+        "--provider",
+        default=None,
+        help="Non-interactive: registry name (openai|anthropic|deepseek|gemini|…)",
+    )
+    o.add_argument("--model", default=None, help="Model id (required with --provider)")
     o.add_argument("--key", default=None, help="API key")
     o.add_argument("--api-base", default=None, help="OpenAI-compatible base URL (custom providers)")
     o.add_argument("--show", action="store_true", help="Print active provider/model")
+    o.add_argument(
+        "--list-models",
+        action="store_true",
+        help="List curated provider → model choices and exit",
+    )
     o.set_defaults(func=cmd_onboard)
 
     m = sub.add_parser("mvp", help="MVP acceptance (Nanobot.run required)")
@@ -479,7 +497,12 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--rna-file", default=None)
     a.add_argument("--force-transfer", action="store_true")
     a.add_argument("--strict", action="store_true", help="Exit 2 unless mode=nanobot_llm")
-    a.add_argument("--device", default="cpu")
+    a.add_argument(
+        "--device",
+        default="auto",
+        choices=["auto", "cuda", "cpu"],
+        help="Science tools device (default: auto → cuda if available)",
+    )
     a.add_argument("--session-key", default="rbp:cli")
     a.add_argument("--out", default=None)
     a.add_argument("--fallback", action="store_true", help=argparse.SUPPRESS)
@@ -497,7 +520,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Multi-turn agent (thinking/tools + JSON verdict; logs quiet)",
     )
     chat.add_argument("--session-key", default=None)
-    chat.add_argument("--device", default="cpu")
+    chat.add_argument(
+        "--device",
+        default="auto",
+        choices=["auto", "cuda", "cpu"],
+        help="Science tools device (default: auto → cuda if available)",
+    )
     chat.add_argument(
         "-v",
         "--verbose",

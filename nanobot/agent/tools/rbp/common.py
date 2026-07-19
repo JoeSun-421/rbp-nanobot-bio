@@ -53,6 +53,64 @@ def ensure_nanobot_bio_on_path() -> Path:
     )
 
 
+_CUDA_CACHE: Optional[bool] = None
+
+
+def cuda_available(*, force_refresh: bool = False) -> bool:
+    """True when a CUDA device is visible (ideal GPU env for RhoBind / ESM).
+
+    Result is cached for the process. Set ``RHOBIND_FORCE_CPU=1`` in tests.
+    """
+    global _CUDA_CACHE
+    if os.environ.get("RHOBIND_FORCE_CPU", "").strip().lower() in ("1", "true", "yes"):
+        return False
+    if _CUDA_CACHE is not None and not force_refresh:
+        return _CUDA_CACHE
+
+    ok = False
+    try:
+        import torch  # type: ignore
+
+        ok = bool(torch.cuda.is_available())
+    except Exception:
+        # Fast path: nvidia-smi presence (ideal GPU host). Avoid slow conda probe
+        # on every tool call when torch is not in the product venv.
+        try:
+            import shutil
+            import subprocess
+
+            if shutil.which("nvidia-smi"):
+                r = subprocess.run(
+                    ["nvidia-smi", "-L"],
+                    capture_output=True,
+                    timeout=5,
+                )
+                ok = r.returncode == 0 and bool((r.stdout or b"").strip())
+        except Exception:
+            ok = False
+
+    _CUDA_CACHE = ok
+    return ok
+
+
+def resolve_device(requested: Optional[str] = None) -> str:
+    """Resolve compute device for delivery tools.
+
+    Ideal product default is **CUDA when available** (HANDOFF / BUILD_SPEC).
+    Accepted values: ``auto`` | ``cuda`` | ``cpu`` | empty (→ env / auto).
+    """
+    raw = (requested if requested is not None else os.environ.get("RHOBIND_DEVICE", "auto"))
+    raw = str(raw or "auto").strip().lower()
+    if raw in ("", "auto", "default"):
+        return "cuda" if cuda_available() else "cpu"
+    if raw in ("cuda", "gpu"):
+        return "cuda"
+    if raw == "cpu":
+        return "cpu"
+    # Unknown token — still prefer CUDA in ideal envs.
+    return "cuda" if cuda_available() else "cpu"
+
+
 def get_delivery_client(
     *,
     offline: bool = False,
@@ -66,7 +124,7 @@ def get_delivery_client(
     apply_delivery_env()
     return DeliveryToolClient(
         offline=offline,
-        device=device or os.environ.get("RHOBIND_DEVICE", "cpu"),
+        device=resolve_device(device),
         use_conda=use_conda,
     )
 

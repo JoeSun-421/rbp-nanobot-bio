@@ -11,26 +11,22 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 _ROOT = Path(__file__).resolve().parent
-_default_nb = _ROOT / "nanobot"
-_ns = os.environ.get("NANOBOT_SRC") or (str(_default_nb) if _default_nb.is_dir() else "")
-if _ns:
-    _nb_parent = str(Path(_ns).expanduser().resolve().parent)
-    while _nb_parent in sys.path:
-        sys.path.remove(_nb_parent)
-    sys.path.insert(0, _nb_parent)
-else:
-    _bio = str(_ROOT.parent)
-    while _bio in sys.path:
-        sys.path.remove(_bio)
-    sys.path.insert(0, _bio)
-_root_s = str(_ROOT)
-if _root_s not in sys.path:
-    sys.path.insert(0, _root_s)
+_BIO_ROOT = Path(os.environ.get("BIO_ROOT", _ROOT.parent)).expanduser().resolve()
+# Runtime lives at $BIO_ROOT/nanobot (sibling), not the §6.2 overlay under nanobot-bio/
+_DEFAULT_NANOBOT_SRC = _BIO_ROOT / "nanobot"
 
 os.environ.setdefault("NANOBOT_BIO_ROOT", str(_ROOT))
-os.environ.setdefault(
-    "NANOBOT_SRC", str(_default_nb if _default_nb.is_dir() else _ROOT / "nanobot")
-)
+os.environ.setdefault("BIO_ROOT", str(_BIO_ROOT))
+os.environ.setdefault("NANOBOT_SRC", str(_DEFAULT_NANOBOT_SRC))
+
+# Prefer sibling runtime on sys.path; keep agent package for backends/integrate
+_bio_s = str(_BIO_ROOT)
+_root_s = str(_ROOT)
+for _p in (_bio_s, _root_s):
+    while _p in sys.path:
+        sys.path.remove(_p)
+sys.path.insert(0, _bio_s)
+sys.path.insert(1, _root_s)
 
 from backends.delivery.client import DeliveryToolClient
 from backends.delivery.env import apply_delivery_env
@@ -51,11 +47,12 @@ _SKILL_CANDIDATES = (
 # ---------------------------------------------------------------------------
 
 def install_rbp_tools_into_nanobot() -> Path:
-    """Ensure workspace skill is synced; tools live under nested nanobot/."""
+    """Sync §6.2 SoT tools/skill into installed nanobot runtime + workspace."""
     import runpy
 
     runpy.run_path(str(PACKAGE_ROOT / "scripts" / "install_rbp_into_nanobot.py"))
-    return Path(os.environ.get("NANOBOT_SRC", PACKAGE_ROOT / "nanobot")) / "agent" / "tools" / "rbp"
+    nb = Path(os.environ.get("NANOBOT_SRC", _DEFAULT_NANOBOT_SRC)).expanduser().resolve()
+    return nb / "agent" / "tools" / "rbp"
 
 
 _AGENTS_BOOTSTRAP = """# RNA–RBP agent
@@ -202,7 +199,7 @@ class RBPAgent:
         self,
         *,
         offline: bool = False,
-        device: str = "cpu",
+        device: str = "auto",
         use_conda: bool = True,
         workspace: Optional[Union[str, Path]] = None,
         config_path: Optional[Union[str, Path]] = None,
@@ -212,14 +209,23 @@ class RBPAgent:
         allow_fallback: bool = False,  # kept for API compat; ignored (always False)
     ):
         apply_delivery_env()
+        # Prefer CUDA when available (HANDOFF device=cuda). Propagate so tool
+        # wrappers that call get_delivery_client() pick up the same device.
+        try:
+            from nanobot.agent.tools.rbp.common import resolve_device
+
+            resolved = resolve_device(device)
+        except Exception:
+            resolved = "cuda" if str(device).lower() in ("cuda", "gpu", "auto", "") else str(device or "cpu")
+        os.environ["RHOBIND_DEVICE"] = resolved
         self.workspace = Path(workspace or WORKSPACE)
         self.config_path = Path(config_path).expanduser() if config_path else None
         ensure_workspace_skill(self.workspace)
         self.client = DeliveryToolClient(
-            offline=offline, device=device, use_conda=use_conda
+            offline=offline, device=resolved, use_conda=use_conda
         )
         self.hooks = list(hooks or [])
-        self.device = device
+        self.device = resolved
         self.offline = offline
         self.prefer_nanobot_llm = prefer_nanobot_llm
         self.allow_fallback = False
@@ -389,7 +395,7 @@ class RBPAgent:
             fb_err = f"{type(e).__name__}: {e}"
             notes = notes + [
                 f"Nanobot.run failed: {fb_err}",
-                "Fix: rbp-agent onboard + LLM API; ensure nested nanobot imports.",
+                "Fix: rbp-agent onboard + LLM API; ensure sibling nanobot is installed.",
             ]
             if hasattr(trace_hook, "push_event"):
                 trace_hook.push_event({"type": "nanobot_run_failed", "error": fb_err})

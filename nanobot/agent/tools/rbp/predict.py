@@ -14,7 +14,14 @@ from typing import Any
 
 from nanobot.agent.tools.base import Tool, tool_parameters
 
-from nanobot.agent.tools.rbp.common import dumps, err, get_delivery_client, ok, timed_call
+from nanobot.agent.tools.rbp.common import (
+    dumps,
+    err,
+    get_delivery_client,
+    ok,
+    resolve_device,
+    timed_call,
+)
 
 
 def _predict_cache_key(rna: str, rbps: list[str], cohort: str, device: str) -> str:
@@ -23,7 +30,7 @@ def _predict_cache_key(rna: str, rbps: list[str], cohort: str, device: str) -> s
             rna.strip().upper(),
             ",".join(sorted(str(x).upper() for x in rbps)),
             str(cohort or "K562").upper(),
-            str(device or "cpu").lower(),
+            str(device or "auto").lower(),
         ]
     )
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:24]
@@ -44,7 +51,12 @@ def _predict_cache_key(rna: str, rbps: list[str], cohort: str, device: str) -> s
                 "description": "List of RBP aliases (donors or own head)",
             },
             "cohort": {"type": "string", "enum": ["K562", "HepG2"], "default": "K562"},
-            "device": {"type": "string", "default": "cpu"},
+            "device": {
+                "type": "string",
+                "enum": ["auto", "cuda", "cpu"],
+                "default": "auto",
+                "description": "Prefer cuda when available (ideal GPU env)",
+            },
             "aggregate": {"type": "string", "enum": ["max", "mean"], "default": "max"},
         },
         "required": ["rna"],
@@ -93,7 +105,7 @@ class PredictInteractionTool(Tool):
             return dumps(err("rna and rbps (or rbp_id) are required"))
         rbps_list = [str(x) for x in list(rbps)]
         cohort = kwargs.get("cohort") or "K562"
-        device = kwargs.get("device") or "cpu"
+        device = resolve_device(kwargs.get("device"))
         key = _predict_cache_key(rna, rbps_list, cohort, device)
 
         cached = PredictInteractionTool._cache.get(key)
