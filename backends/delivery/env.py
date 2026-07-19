@@ -65,18 +65,13 @@ def load_rbp_registry() -> dict[str, Any]:
 
 
 def _default_hf_home() -> str:
-    """Prefer data-disk cache used by activate_env.sh; else ~/.cache/huggingface."""
-    for candidate in (
-        os.environ.get("HF_HOME"),
-        "/root/autodl-tmp/hf-cache",
-        str(Path.home() / ".cache" / "huggingface"),
-    ):
-        if not candidate:
-            continue
-        p = Path(candidate).expanduser()
-        if p.is_dir() or candidate == os.environ.get("HF_HOME"):
-            return str(p)
-    return "/root/autodl-tmp/hf-cache"
+    """Prefer ``HF_HOME``; else ``$XDG_CACHE_HOME/huggingface`` / ``~/.cache/huggingface``."""
+    if os.environ.get("HF_HOME"):
+        return str(Path(os.environ["HF_HOME"]).expanduser())
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        return str(Path(xdg).expanduser() / "huggingface")
+    return str(Path.home() / ".cache" / "huggingface")
 
 
 def apply_delivery_env() -> dict[str, str]:

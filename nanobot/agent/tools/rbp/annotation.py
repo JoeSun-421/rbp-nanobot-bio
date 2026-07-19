@@ -148,8 +148,8 @@ class LiteratureSearchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Literature snippets via delivery literature_retrieval (network). "
-            "At most ONE call per query; further calls return an error envelope."
+            "Literature / PubMed snippets via delivery literature_retrieval. "
+            "Use this instead of web_search. At most ONE call per query."
         )
 
     @property
@@ -184,3 +184,72 @@ class LiteratureSearchTool(Tool):
         return dumps(
             ok({"papers": out.get("papers") or out.get("results") or []}, ms)
         )
+
+
+@tool_parameters(
+    {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "q": {"type": "string"},
+        },
+        "required": [],
+    }
+)
+class WebSearchRedirectTool(Tool):
+    """Stub: replace nanobot web_search so the LLM gets a clear redirect."""
+
+    _plugin_discoverable = False
+    _scopes = {"core", "subagent"}
+
+    @property
+    def name(self) -> str:
+        return "web_search"
+
+    @property
+    def description(self) -> str:
+        return (
+            "DISABLED for RBP agent. Do not use. Call literature_search "
+            "with name/rbp_name for PubMed instead."
+        )
+
+    @property
+    def read_only(self) -> bool:
+        return True
+
+    async def execute(self, **kwargs: Any) -> str:
+        return dumps(
+            err(
+                "web_search is disabled; call literature_search "
+                "(name=RBP gene symbol) for papers"
+            )
+        )
+
+
+@tool_parameters(
+    {
+        "type": "object",
+        "properties": {"url": {"type": "string"}},
+        "required": [],
+    }
+)
+class WebFetchRedirectTool(Tool):
+    """Stub: replace nanobot web_fetch."""
+
+    _plugin_discoverable = False
+    _scopes = {"core", "subagent"}
+
+    @property
+    def name(self) -> str:
+        return "web_fetch"
+
+    @property
+    def description(self) -> str:
+        return "DISABLED for RBP agent. Use literature_search instead."
+
+    @property
+    def read_only(self) -> bool:
+        return True
+
+    async def execute(self, **kwargs: Any) -> str:
+        return dumps(err("web_fetch is disabled; use literature_search instead"))

@@ -69,15 +69,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(mem_warn)
 
     rhobind_py = None
-    for cand in (
-        Path("/root/autodl-tmp/conda/envs/rhobind/bin/python"),
-        Path(os.environ.get("CONDA_PREFIX", "")).parent / "rhobind" / "bin" / "python",
-        Path.home() / "miniconda3" / "envs" / "rhobind" / "bin" / "python",
-        Path("/root/miniconda3/envs/rhobind/bin/python"),
-    ):
-        if cand.is_file():
-            rhobind_py = cand
-            break
+    try:
+        from backends.delivery.client import DeliveryToolClient as _DTC
+
+        pref = _DTC._conda_env_prefix("rhobind")
+        if pref is not None:
+            cand = pref / "bin" / "python"
+            if cand.is_file():
+                rhobind_py = cand
+    except Exception:
+        pass
     print(
         f"rhobind python: {'OK' if rhobind_py else 'MISSING'}  "
         f"{rhobind_py or '(install via delivery setup_envs.sh)'}"
@@ -183,14 +184,13 @@ def cmd_compliance(args: argparse.Namespace) -> int:
 def cmd_agent(args: argparse.Namespace) -> int:
     """One-shot Nanobot.run (proposal primary path). No pipeline fallback."""
     from core.chat_ux import (
-        ThinkingSpinner,
         configure_chat_logging,
         format_verdict_display,
-        make_agent_trace_hook,
         memory_blocker_message,
         print_banner,
         print_registration,
         print_verdict_block,
+        run_agent_turn_streamed_sync,
     )
     from integrate import skill_path as _skill_path
 
@@ -269,6 +269,7 @@ def cmd_agent(args: argparse.Namespace) -> int:
         use_conda=True,
         prefer_nanobot_llm=True,
         allow_fallback=False,
+        auto_install_into_nanobot=False,
         hooks=[RBPTraceHook(trace)],
     )
     try:
@@ -286,14 +287,12 @@ def cmd_agent(args: argparse.Namespace) -> int:
         "If resolve_rbp.in_panel=true: own-head predict once then STOP. "
         "Never invent p_hat."
     )
-    spinner = ThinkingSpinner(label="thinking")
-    progress = make_agent_trace_hook(spinner=spinner)
-    with spinner:
-        result = agent.run_sync(
-            prompt,
-            session_key=getattr(args, "session_key", None) or "rbp:cli",
-            extra_hooks=[progress],
-        )
+    result = run_agent_turn_streamed_sync(
+        agent,
+        prompt,
+        session_key=getattr(args, "session_key", None) or "rbp:cli",
+        extra_hooks=[],
+    )
     display = format_verdict_display(result)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -305,19 +304,17 @@ def cmd_agent(args: argparse.Namespace) -> int:
         return 2
     return 0 if result.mode != "error" else 1
 
-
 def cmd_chat(args: argparse.Namespace) -> int:
     """Multi-turn agent: quiet logs, visible thinking/tools, JSON verdict."""
     from core.chat_ux import (
-        ThinkingSpinner,
         configure_chat_logging,
         format_verdict_display,
-        make_agent_trace_hook,
         memory_blocker_message,
         print_chat_header,
         print_registration,
         print_verdict_block,
         read_user_message,
+        run_agent_turn_streamed_sync,
     )
     from integrate import skill_path as _skill_path
 
@@ -349,6 +346,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         use_conda=True,
         prefer_nanobot_llm=True,
         allow_fallback=False,
+        auto_install_into_nanobot=False,
         hooks=[RBPTraceHook(trace)],
     )
     try:
@@ -409,12 +407,9 @@ def cmd_chat(args: argparse.Namespace) -> int:
             "Never invent p_hat."
         )
         try:
-            spinner = ThinkingSpinner(label="thinking")
-            progress = make_agent_trace_hook(spinner=spinner)
-            with spinner:
-                result = agent.run_sync(
-                    prompt, session_key=session_key, extra_hooks=[progress]
-                )
+            result = run_agent_turn_streamed_sync(
+                agent, prompt, session_key=session_key, extra_hooks=[]
+            )
         except Exception as e:
             print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
             continue

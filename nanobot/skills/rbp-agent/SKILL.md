@@ -17,12 +17,14 @@ Every tool returns a JSON **envelope**:
 
 **Hard rules**
 - Use only RBP / delivery tools listed below. Never call `exec`, `spawn`,
-  shell, `pip`, file editors, or web search.
+  shell, `pip`, file editors, `web_search`, or `web_fetch`
+  (they are unregistered). For papers use `literature_search` only.
 - Never invent a numeric `p_hat` when `predict_interaction` failed.
 - Final answer = **one raw JSON object only** (no markdown, no \`\`\`json fences).
   `explanation` must be **plain sentences only** — never paste JSON into it.
 - `domain_architecture` / `seq_similarity` need a **protein** sequence —
-  never pass the RNA string as protein.
+  never pass the RNA string as protein. For catalogue RBPs you may pass
+  `alias` / `uniprot` instead of the AA string.
 
 **Anti-loop**
 - Do not re-call the same tool with the same or trivial arg changes.
@@ -52,7 +54,8 @@ Transfer defaults: `N_cand ≤ 5`, drop proxies with fused similarity `< 0.30`.
 
 ### P0
 - `get_known_rbp_list` — catalogue K
-- `seq_similarity` — ESM-C primary (`encoder=esmc`); `device=auto` (prefer CUDA)
+- `seq_similarity` — ESM-C (`encoder=esmc`); args: protein `sequence` **or**
+  `alias`/`uniprot`; `device=auto` (prefer CUDA). Never RNA.
 - `predict_interaction` — RhoBind heads; `rna` + `rbp_id`/`rbps` + `cohort`;
   omit `device` or use `auto` so CUDA is used when available (HANDOFF)
 

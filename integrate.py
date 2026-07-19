@@ -204,13 +204,12 @@ class RBPAgent:
         workspace: Optional[Union[str, Path]] = None,
         config_path: Optional[Union[str, Path]] = None,
         hooks: Optional[list] = None,
-        auto_install_into_nanobot: bool = True,
+        auto_install_into_nanobot: bool = False,
         prefer_nanobot_llm: bool = True,
         allow_fallback: bool = False,  # kept for API compat; ignored (always False)
     ):
         apply_delivery_env()
-        # Prefer CUDA when available (HANDOFF device=cuda). Propagate so tool
-        # wrappers that call get_delivery_client() pick up the same device.
+        # Prefer CUDA when available (HANDOFF device=cuda). Light resolve — no torch.
         try:
             from nanobot.agent.tools.rbp.common import resolve_device
 
@@ -233,7 +232,14 @@ class RBPAgent:
             # core/pipeline removed — product path is Nanobot.run only
             pass
 
-        if auto_install_into_nanobot:
+        # Sync only when asked, or when runtime overlay is missing (skip-if-fresh inside).
+        need_install = bool(auto_install_into_nanobot)
+        if not need_install:
+            try:
+                from nanobot.agent.tools.rbp.register import register_all  # noqa: F401
+            except Exception:
+                need_install = True
+        if need_install:
             try:
                 install_rbp_tools_into_nanobot()
             except Exception as e:
@@ -243,7 +249,6 @@ class RBPAgent:
         self.registry = None
         self.tool_names: list[str] = []
         self._init_registry()
-
     def _init_registry(self) -> None:
         try:
             from nanobot.agent.tools.registry import ToolRegistry
@@ -272,6 +277,8 @@ class RBPAgent:
         if loop is None or not hasattr(loop, "tools"):
             raise TypeError("Expected Nanobot instance with _loop.tools")
         # Drop shell/network defaults that derail RNA–RBP evaluation (LLM may pip install).
+        # web_search / web_fetch are unregistered then replaced by redirect stubs
+        # from register_rbp_tools (clear error → use literature_search).
         for noisy in (
             "exec",
             "spawn",
@@ -415,6 +422,103 @@ class RBPAgent:
     def run_sync(self, message: str, **kwargs: Any) -> AgentResult:
         """Sync wrapper; accepts the same kwargs as ``run`` (incl. extra_hooks)."""
         return asyncio.run(self.run(message, **kwargs))
+
+    async def run_streamed(
+        self,
+        message: str,
+        *,
+        session_key: str = "rbp:default",
+        extra_hooks: Optional[list[Any]] = None,
+        renderer: Any = None,
+        trace_path: Optional[Union[str, Path]] = None,
+    ) -> AgentResult:
+        """Like ``run`` but drives ``Nanobot.run_streamed`` into a StreamRenderer."""
+        notes = linux_feasibility_notes()
+        tp = Path(trace_path or DEFAULT_TRACE)
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        trace_hook = _make_trace_hook(tp, session_key)
+        hooks = [trace_hook, *self.hooks, *(extra_hooks or [])]
+
+        if self.offline or not self.prefer_nanobot_llm:
+            err = (
+                "Agent path requires Nanobot LLM "
+                "(offline/prefer_nanobot_llm=False unsupported)"
+            )
+            return AgentResult(
+                content=json.dumps({"error": err}, ensure_ascii=False),
+                mode="error",
+                session_key=session_key,
+                tool_names=list(self.tool_names),
+                error=err,
+                linux_notes=notes,
+                mvp_complete=False,
+            )
+
+        try:
+            from nanobot.sdk.types import (
+                STREAM_EVENT_TEXT_COMPLETED,
+                STREAM_EVENT_TEXT_DELTA,
+            )
+
+            bot = self.get_nanobot()
+            stream = await bot.run_streamed(
+                message,
+                session_key=session_key,
+                hooks=hooks,
+            )
+            async for ev in stream.stream_events():
+                et = getattr(ev, "type", None)
+                if renderer is not None and et == STREAM_EVENT_TEXT_DELTA:
+                    delta = getattr(ev, "content", None) or ""
+                    if delta:
+                        await renderer.on_delta(delta)
+                elif renderer is not None and et == STREAM_EVENT_TEXT_COMPLETED:
+                    # Defer final print — caller shows verdict JSON block
+                    if getattr(renderer, "_live", None) is not None:
+                        renderer._live.stop()
+                        renderer._live = None
+                    if hasattr(renderer, "_stop_spinner"):
+                        renderer._stop_spinner()
+                    # Clear buffer so on_end would not duplicate; we skip on_end print
+                    if hasattr(renderer, "_buf"):
+                        renderer._buf = ""
+            run_result = await stream.wait()
+            content = getattr(run_result, "content", None) or ""
+            verdict = extract_verdict_from_content(content)
+            ok_v, verrs = validate_verdict(verdict)
+            return AgentResult(
+                content=content,
+                mode="nanobot_llm",
+                session_key=session_key,
+                tool_names=list(self.tool_names),
+                verdict=verdict,
+                traces=list(getattr(trace_hook, "_buffer", [])),
+                linux_notes=notes,
+                mvp_complete=ok_v,
+                verdict_valid=ok_v,
+                verdict_errors=verrs,
+            )
+        except Exception as e:
+            fb_err = f"{type(e).__name__}: {e}"
+            notes = notes + [
+                f"Nanobot.run_streamed failed: {fb_err}",
+                "Fix: rbp-agent onboard + LLM API; ensure sibling nanobot is installed.",
+            ]
+            return AgentResult(
+                content=json.dumps(
+                    {"error": fb_err, "mode": "error"},
+                    ensure_ascii=False,
+                ),
+                mode="error",
+                session_key=session_key,
+                tool_names=list(self.tool_names),
+                error=fb_err,
+                linux_notes=notes,
+                mvp_complete=False,
+            )
+
+    def run_streamed_sync(self, message: str, **kwargs: Any) -> AgentResult:
+        return asyncio.run(self.run_streamed(message, **kwargs))
 
 
 def linux_feasibility_notes() -> list[str]:

@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import threading
 import time
 from pathlib import Path
 from typing import Any, Optional, TextIO
@@ -93,7 +92,10 @@ def print_chat_header(
     stream.write(f"  Tools   {s.bold(str(n_tools))} registered\n")
     stream.write(f"  Skill   rbp-agent ({skill})\n")
     stream.write(
-        s.dim("  Commands  /quit  /new  /onboard  ·  agent steps shown below\n")
+        s.dim(
+            "  Commands  /quit  /new  /onboard  ·  "
+            "thoughts fold by default (RBP_SHOW_THINKING=1 to expand)\n"
+        )
     )
     if mem_warn:
         stream.write(s.yellow(f"\n  {mem_warn}\n"))
@@ -177,98 +179,110 @@ def configure_chat_logging(*, verbose: bool = False, log_file: Optional[Path] = 
 
 
 # ---------------------------------------------------------------------------
-# Input
+# Input (prompt_toolkit — same stack as nanobot agent CLI)
 # ---------------------------------------------------------------------------
 
+_PROMPT_SESSION: Any = None
+
+
+def _init_prompt_session(history_dir: Optional[Path] = None) -> None:
+    """Create a PromptSession with file history under workspace/sessions."""
+    global _PROMPT_SESSION
+    if _PROMPT_SESSION is not None:
+        return
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.history import FileHistory
+    except ImportError:
+        _PROMPT_SESSION = False  # type: ignore[assignment]
+        return
+
+    base = history_dir or Path(
+        os.environ.get("NANOBOT_WORKSPACE", "workspace")
+    ) / "sessions"
+    base = Path(base)
+    base.mkdir(parents=True, exist_ok=True)
+    hist = base / "rbp_chat_history"
+    _PROMPT_SESSION = PromptSession(
+        history=FileHistory(str(hist)),
+        enable_open_in_editor=False,
+        multiline=False,
+    )
+
+
 def read_user_message(prompt: str = "you › ") -> Optional[str]:
-    """Read one chat turn; drain multi-line pastes from stdin."""
-    import select
+    """Read one chat turn via prompt_toolkit (history + paste); fallback to input()."""
+    _init_prompt_session()
+    if _PROMPT_SESSION and _PROMPT_SESSION is not False:
+        try:
+            from prompt_toolkit.formatted_text import HTML
+            from prompt_toolkit.patch_stdout import patch_stdout
+
+            with patch_stdout():
+                # Brand tweak of nanobot's blue "You:" prompt
+                text = _PROMPT_SESSION.prompt(
+                    HTML(f"<b fg='ansicyan'>{prompt}</b>"),
+                )
+            return (text or "").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        except Exception:
+            pass
 
     s = Style(sys.stdout)
     try:
         first = input(s.cyan(prompt) if s.on else prompt)
     except (EOFError, KeyboardInterrupt):
         return None
-    if first is None:
-        return None
-    stripped = first.strip()
-    if not stripped:
-        return ""
-    if stripped.startswith("/") or stripped.lower() in ("quit", "exit"):
-        return stripped
-
-    lines = [first.rstrip("\n")]
-    try:
-        while select.select([sys.stdin], [], [], 0.08)[0]:
-            nxt = sys.stdin.readline()
-            if nxt == "":
-                break
-            if not nxt.strip():
-                if len(lines) > 1:
-                    break
-                continue
-            lines.append(nxt.rstrip("\n"))
-    except (EOFError, KeyboardInterrupt, ValueError, OSError):
-        pass
-    return "\n".join(lines).strip()
+    return (first or "").strip()
 
 
 # ---------------------------------------------------------------------------
-# Spinner (idle wait between hook events)
+# Spinner — adapter over nanobot.cli.stream.ThinkingSpinner
 # ---------------------------------------------------------------------------
 
 class ThinkingSpinner:
-    """Braille spinner on stderr while the LLM is working."""
+    """Wrap nanobot Rich status spinner; expose pause/resume for tool traces."""
 
-    def __init__(self, label: str = "thinking") -> None:
+    def __init__(self, label: str = "thinking", bot_name: str = "rbp-agent") -> None:
         self._label = label
         self._hint = ""
-        self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-        self._frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        self._pause_cm: Any = None
         self._enabled = sys.stderr.isatty() and not os.environ.get("RBP_NO_SPINNER")
-        self._paused = False
+        self._inner: Any = None
+        if self._enabled:
+            try:
+                from nanobot.cli.stream import ThinkingSpinner as _NBSpinner
+
+                self._inner = _NBSpinner(bot_name=bot_name)
+            except Exception:
+                self._enabled = False
 
     def update(self, hint: str) -> None:
         self._hint = (hint or "").strip()[:48]
 
     def pause(self) -> None:
-        """Clear spinner line so step logs are not overwritten."""
-        self._paused = True
-        if self._enabled:
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
+        if not self._inner or self._pause_cm is not None:
+            return
+        self._pause_cm = self._inner.pause()
+        self._pause_cm.__enter__()
 
     def resume(self) -> None:
-        self._paused = False
+        if self._pause_cm is None:
+            return
+        self._pause_cm.__exit__(None, None, None)
+        self._pause_cm = None
 
     def __enter__(self) -> "ThinkingSpinner":
-        if not self._enabled:
-            return self
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        if self._inner:
+            self._inner.__enter__()
         return self
 
     def __exit__(self, *exc: Any) -> None:
-        if not self._enabled:
-            return
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=1.0)
-        sys.stderr.write("\r\033[K")
-        sys.stderr.flush()
-
-    def _run(self) -> None:
-        i = 0
-        while not self._stop.is_set():
-            if not self._paused:
-                frame = self._frames[i % len(self._frames)]
-                hint = f" · {self._hint}" if self._hint else ""
-                sys.stderr.write(f"\r{frame} {self._label}{hint}")
-                sys.stderr.flush()
-            i += 1
-            time.sleep(0.08)
+        self.resume()
+        if self._inner:
+            self._inner.__exit__(*exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -320,21 +334,55 @@ def _summarize_tool_result(result: Any) -> str:
     return _short_json(text, 100)
 
 
+def _show_full_thinking() -> bool:
+    """Expand folded thoughts (Cursor-style default = collapsed)."""
+    return os.environ.get("RBP_SHOW_THINKING", "").strip().lower() in (
+        "1", "true", "yes", "full", "expand",
+    )
+
+
+def _slim_tool_args(args: dict[str, Any]) -> dict[str, Any]:
+    prefer = (
+        "rbp_id", "rbps", "query", "uniprot", "alias", "name",
+        "cohort", "rna", "sequence", "target", "encoder", "device",
+    )
+    slim: dict[str, Any] = {}
+    for k in prefer:
+        if k not in args:
+            continue
+        v = args[k]
+        if k in ("rna", "sequence") and isinstance(v, str) and len(v) > 24:
+            unit = "nt" if k == "rna" else "aa"
+            slim[k] = f"{v[:12]}…({len(v)}{unit})"
+        else:
+            slim[k] = v
+    if not slim:
+        slim = {k: args[k] for k in list(args)[:4]}
+    return slim
+
+
 def make_agent_trace_hook(
     *,
     spinner: Optional[ThinkingSpinner] = None,
     stream: TextIO = sys.stderr,
     show_args: bool = True,
 ):
-    """AgentHook: print thinking + tool calls/results (framework logs stay quiet)."""
+    """AgentHook: tools visible; thinking buffered then folded (Cursor-like).
+
+    Live token spam is suppressed. Full thought text only when
+    ``RBP_SHOW_THINKING=1`` (also saved under workspace/sessions/).
+    """
     from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 
     class _AgentTraceHook(AgentHook):
         def __init__(self) -> None:
             super().__init__()
             self._s = Style(stream)
-            self._reasoning_buf: list[str] = []
-            self._reasoning_open = False
+            self._thought_parts: list[str] = []
+            self._thought_t0: Optional[float] = None
+            self._thought_folded = False
+            self._tools_this_run: list[str] = []
+            self._step = 0
 
         def _out(self, line: str) -> None:
             if spinner:
@@ -344,82 +392,120 @@ def make_agent_trace_hook(
             if spinner:
                 spinner.resume()
 
+        def _thought_text(self) -> str:
+            return "".join(self._thought_parts).strip()
+
+        def _save_thought(self, text: str) -> Optional[Path]:
+            if not text:
+                return None
+            try:
+                base = Path(
+                    os.environ.get("NANOBOT_WORKSPACE", "workspace")
+                ) / "sessions"
+                base.mkdir(parents=True, exist_ok=True)
+                path = base / "last_thinking.txt"
+                path.write_text(text + "\n", encoding="utf-8")
+                return path
+            except OSError:
+                return None
+
+        def _fold_thought(self) -> None:
+            """Replace live thinking with one Cursor-like collapsed line."""
+            if self._thought_folded:
+                return
+            text = self._thought_text()
+            if not text and self._thought_t0 is None:
+                return
+            self._thought_folded = True
+            elapsed = 0.0
+            if self._thought_t0 is not None:
+                elapsed = max(0.0, time.perf_counter() - self._thought_t0)
+            path = self._save_thought(text)
+            preview = " ".join(text.split())
+            if len(preview) > 96:
+                preview = preview[:95] + "…"
+            # Collapsed header (always)
+            self._out(
+                f"  {self._s.magenta('✻')} {self._s.bold('Thought')}"
+                + self._s.dim(f"  ·  {elapsed:.1f}s  ·  folded")
+                + (self._s.dim(f"  ·  {len(text)} chars") if text else "")
+            )
+            if preview:
+                self._out(self._s.dim(f"      {preview}"))
+            if _show_full_thinking() and text:
+                self._out(self._s.dim("      ── full thinking ──"))
+                for ln in text.splitlines() or [text]:
+                    self._out(self._s.dim(f"      {ln}"))
+                self._out(self._s.dim("      ──────────────────"))
+            elif path is not None:
+                self._out(
+                    self._s.dim(
+                        f"      full: {path}  ·  expand: RBP_SHOW_THINKING=1"
+                    )
+                )
+            self._thought_parts.clear()
+            self._thought_t0 = None
+
         async def before_run(self, context: AgentRunHookContext) -> None:
-            self._out(self._s.bold(self._s.cyan("▸ agent")) + self._s.dim("  run start"))
+            self._tools_this_run.clear()
+            self._step = 0
+            self._thought_parts.clear()
+            self._thought_folded = False
+            self._thought_t0 = None
+            self._out(self._s.bold(self._s.cyan("▸ agent")) + self._s.dim("  start"))
 
         async def before_iteration(self, context: AgentHookContext) -> None:
             n = context.iteration + 1
             if spinner:
                 spinner.update(f"turn {n}")
-            self._out(
-                self._s.bold(f"── turn {n} ──")
-            )
+            self._out(self._s.bold(f"── turn {n} ──"))
+            # New model turn may bring a new thought block
+            self._thought_folded = False
 
         async def emit_reasoning(self, reasoning_content: str | None) -> None:
+            # Buffer only — never print per-token (that made the CLI ugly/slow).
             if not reasoning_content:
                 return
-            self._reasoning_open = True
-            self._reasoning_buf.append(reasoning_content)
-            # Stream chunks live (dim)
-            chunk = reasoning_content.replace("\n", " ").strip()
-            if chunk:
-                if spinner:
-                    spinner.pause()
-                stream.write(self._s.dim("  think  ") + self._s.magenta(chunk[:200]))
-                if len(chunk) > 200:
-                    stream.write(self._s.dim("…"))
-                stream.write("\n")
-                stream.flush()
-                if spinner:
-                    spinner.resume()
+            if self._thought_t0 is None:
+                self._thought_t0 = time.perf_counter()
+            self._thought_parts.append(reasoning_content)
+            if spinner:
+                spinner.update("thinking")
 
         async def emit_reasoning_end(self) -> None:
-            self._reasoning_open = False
-            self._reasoning_buf.clear()
+            self._fold_thought()
 
         async def before_execute_tools(self, context: AgentHookContext) -> None:
-            # Model "thought" text before tools (non-streaming models)
+            # Non-streaming models put a plan in response.content
             resp = context.response
             thought = (getattr(resp, "content", None) or "").strip() if resp else ""
-            if thought and not context.streamed_reasoning:
-                # Truncate long pre-tool chatter; keep signal
-                one = thought.replace("\n", " ")
-                if len(one) > 220:
-                    one = one[:219] + "…"
-                self._out(self._s.dim("  think  ") + one)
+            if thought and not context.streamed_reasoning and not self._thought_parts:
+                self._thought_t0 = self._thought_t0 or time.perf_counter()
+                self._thought_parts.append(thought)
+            self._fold_thought()
 
-            for tc in context.tool_calls or []:
+            calls = list(context.tool_calls or [])
+            if not calls:
+                return
+            self._out(self._s.dim("  tools"))
+            for tc in calls:
+                self._step += 1
                 name = getattr(tc, "name", "?")
+                self._tools_this_run.append(name)
                 if spinner:
                     spinner.update(name)
                 args = getattr(tc, "arguments", None) or {}
+                arg_s = ""
                 if show_args and isinstance(args, dict):
-                    # Prefer short biologically relevant keys
-                    prefer = (
-                        "rbp_id", "rbps", "query", "uniprot", "alias",
-                        "cohort", "rna", "sequence", "target",
-                    )
-                    slim: dict[str, Any] = {}
-                    for k in prefer:
-                        if k in args:
-                            v = args[k]
-                            if k == "rna" and isinstance(v, str) and len(v) > 24:
-                                slim[k] = f"{v[:12]}…({len(v)}nt)"
-                            elif k == "sequence" and isinstance(v, str) and len(v) > 24:
-                                slim[k] = f"{v[:12]}…({len(v)}aa)"
-                            else:
-                                slim[k] = v
-                    if not slim:
-                        slim = {k: args[k] for k in list(args)[:4]}
-                    arg_s = _short_json(slim, 140)
-                else:
-                    arg_s = ""
+                    arg_s = _short_json(_slim_tool_args(args), 160)
                 self._out(
-                    f"  {self._s.yellow('tool')}  {self._s.bold(name)}"
+                    f"  {self._s.yellow(f'{self._step:>2}.')} "
+                    f"{self._s.bold(name)}"
                     + (self._s.dim(f"  {arg_s}") if arg_s else "")
                 )
 
         async def after_iteration(self, context: AgentHookContext) -> None:
+            self._fold_thought()
             results = list(context.tool_results or [])
             calls = list(context.tool_calls or [])
             events = list(context.tool_events or [])
@@ -436,32 +522,34 @@ def make_agent_trace_hook(
                     summary = _summarize_tool_result(res) if res is not None else "—"
                     ok = not str(summary).startswith("error")
                 mark = self._s.green("←") if ok else self._s.red("←")
-                self._out(f"  {mark} {self._s.dim(name)}  {summary}")
+                self._out(
+                    f"  {mark} {self._s.bold(name) if ok else self._s.red(name)}"
+                    f"  {self._s.dim(summary)}"
+                )
 
             if spinner:
-                spinner.update(f"turn {context.iteration + 1} done")
-
-            # Final answer this turn (no more tools)
-            if not calls and context.response is not None:
-                final = (context.response.content or "").strip()
-                if final and not context.tool_calls:
-                    preview = final.replace("\n", " ")
-                    if len(preview) > 160:
-                        preview = preview[:159] + "…"
-                    self._out(self._s.dim("  draft  ") + preview)
+                spinner.update("thinking")
 
         async def after_run(self, context: AgentRunHookContext) -> None:
-            used = context.tools_used or []
+            self._fold_thought()
+            used = list(context.tools_used or self._tools_this_run)
             if used:
+                # Preserve order, unique
+                seen: list[str] = []
+                for n in used:
+                    if n not in seen:
+                        seen.append(n)
                 self._out(
                     self._s.dim("▸ done")
-                    + f"  tools used: {', '.join(used[:12])}"
-                    + (f" (+{len(used) - 12})" if len(used) > 12 else "")
+                    + f"  {len(seen)} tools: "
+                    + ", ".join(seen[:16])
+                    + (f" (+{len(seen) - 16})" if len(seen) > 16 else "")
                 )
             else:
                 self._out(self._s.dim("▸ done"))
 
         async def on_error(self, context: AgentRunHookContext) -> None:
+            self._fold_thought()
             err = context.error or (
                 type(context.exception).__name__ if context.exception else "error"
             )
@@ -536,3 +624,68 @@ def memory_blocker_message(min_gb: float = 8.0) -> Optional[str]:
             "(never invent scores). Upgrade instance for acceptance runs."
         )
     return None
+
+
+def run_agent_turn_streamed_sync(
+    agent: Any,
+    prompt: str,
+    *,
+    session_key: str,
+    extra_hooks: Optional[list[Any]] = None,
+    bot_name: str = "rbp-agent",
+) -> Any:
+    """Sync helper: streamed run + Rich spinner + folded thought + tool steps.
+
+    Final JSON is not printed here — caller uses ``print_verdict_block``.
+    Answer tokens are not Live-rendered (JSON contract → verdict box only).
+    """
+    import asyncio
+
+    from nanobot.cli.stream import ThinkingSpinner as NBSpinner
+
+    # Spinner only (no Live markdown of JSON — keeps the UI clean/fast).
+    nb_spinner = NBSpinner(bot_name=bot_name)
+
+    class _Bridge:
+        def __init__(self) -> None:
+            self._cm: Any = None
+            self._entered = False
+
+        def update(self, hint: str) -> None:
+            return None
+
+        def pause(self) -> None:
+            if self._cm is not None:
+                return
+            self._cm = nb_spinner.pause()
+            self._cm.__enter__()
+
+        def resume(self) -> None:
+            if self._cm is None:
+                return
+            self._cm.__exit__(None, None, None)
+            self._cm = None
+
+        def __enter__(self) -> "_Bridge":
+            nb_spinner.__enter__()
+            self._entered = True
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            self.resume()
+            if self._entered:
+                nb_spinner.__exit__(*exc)
+            return None
+
+    bridge = _Bridge()
+    progress = make_agent_trace_hook(spinner=bridge)
+    hooks = [progress, *(extra_hooks or [])]
+    with bridge:
+        return asyncio.run(
+            agent.run_streamed(
+                prompt,
+                session_key=session_key,
+                extra_hooks=hooks,
+                renderer=None,
+            )
+        )

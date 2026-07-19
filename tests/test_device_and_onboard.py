@@ -51,6 +51,27 @@ def test_resolve_device_explicit_cpu(monkeypatch):
     assert resolve_device("cpu") == "cpu"
 
 
+def test_resolve_device_auto_does_not_import_torch(monkeypatch):
+    """Chat startup must not pay for import torch."""
+    monkeypatch.delenv("RHOBIND_FORCE_CPU", raising=False)
+    monkeypatch.setenv("RHOBIND_DEVICE", "auto")
+    import importlib.util
+
+    # Load SoT module fresh so we can clear its CUDA cache
+    p = ROOT / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
+    spec = importlib.util.spec_from_file_location("rbp_common_notorch", p)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    mod._CUDA_CACHE = None
+
+    before = "torch" in sys.modules
+    _ = mod.resolve_device("auto")
+    after = "torch" in sys.modules
+    if not before:
+        assert not after, "resolve_device(auto) must not import torch"
+
+
 def test_onboard_catalog_covers_mainstream_vendors():
     from core.onboard import FEATURED, PROVIDER_MODELS, list_models_text, models_for
 

@@ -291,24 +291,36 @@ class DeliveryToolClient:
         """
         script = self.script_path(name)
         apply_delivery_env()
-        env = os.environ.copy()
+        env = self._subprocess_env()
 
         conda_env = self.conda_envs.get(name) if self.use_conda else None
         json_arg = json.dumps(payload, ensure_ascii=False)
 
-        if conda_env and self._conda_env_exists(conda_env):
-            # Linux 生产路径：进对的科学环境
-            cmd = [
-                "conda",
-                "run",
-                "-n",
-                conda_env,
-                "--no-capture-output",
-                "python",
-                str(script),
-                "--json",
-                json_arg,
-            ]
+        # Prefer the env's absolute python binary over `conda run … python`.
+        # The agent .venv has torch but NOT transformers; if PATH/.venv leaks
+        # into the child, rhobind_predict fails with exactly:
+        #   ModuleNotFoundError: No module named 'transformers'
+        py = self._conda_python(conda_env) if conda_env else None
+        if py is not None:
+            cmd = [str(py), str(script), "--json", json_arg]
+            # Point CONDA_PREFIX at the science env so native libs resolve.
+            prefix = py.parent.parent
+            env["CONDA_PREFIX"] = str(prefix)
+            env["CONDA_DEFAULT_ENV"] = conda_env or ""
+            # Direct env python (vs `conda run`) does not put env bin on PATH.
+            # foldseek / mmseqs / USalign are invoked by basename in delivery
+            # scripts → must prepend ``$CONDA_PREFIX/bin``.
+            env["PATH"] = f"{prefix / 'bin'}:{env.get('PATH', '')}"
+            foldseek = prefix / "bin" / "foldseek"
+            if foldseek.is_file():
+                env["FOLDSEEK"] = str(foldseek)
+            mmseqs = prefix / "bin" / "mmseqs"
+            if mmseqs.is_file():
+                env.setdefault("MMSEQS", str(mmseqs))
+            # USalign often lives in AGENT_DB/bin (set by setup.sh)
+            us = env.get("USALIGN") or ""
+            if us and Path(us).is_file():
+                env["USALIGN"] = us
         else:
             # 无 conda 时仍真实执行；缺依赖则 rc!=0，由上层记入 errors
             # （绝不编造 AUPRC / binding prob）
@@ -332,7 +344,76 @@ class DeliveryToolClient:
         return self._parse_json_stdout(proc.stdout)
 
     @staticmethod
-    def _conda_env_exists(name: str) -> bool:
+    def _omp_ok(v: str | None) -> bool:
+        return bool(v) and v.isdigit() and int(v) > 0
+
+    @classmethod
+    def _subprocess_env(cls) -> dict[str, str]:
+        """Env for science-tool children: keep delivery vars, drop agent venv leak."""
+        env = os.environ.copy()
+
+        # Agent .venv on PATH / VIRTUAL_ENV can make children see torch without
+        # transformers (exact rhobind_predict failure mode). Strip those.
+        env.pop("VIRTUAL_ENV", None)
+        env.pop("VIRTUAL_ENV_PROMPT", None)
+        env.pop("PYTHONHOME", None)
+
+        # Keep delivery/HF vars; drop agent PYTHONPATH so site-packages win.
+        env.pop("PYTHONPATH", None)
+
+        path = env.get("PATH", "")
+        if path:
+            cleaned = [
+                p
+                for p in path.split(":")
+                if p and "/.venv/" not in p and not p.endswith("/.venv/bin")
+            ]
+            env["PATH"] = ":".join(cleaned)
+
+        if not cls._omp_ok(env.get("OMP_NUM_THREADS")):
+            env["OMP_NUM_THREADS"] = "4"
+        if not cls._omp_ok(env.get("MKL_NUM_THREADS")):
+            env["MKL_NUM_THREADS"] = env["OMP_NUM_THREADS"]
+        if not cls._omp_ok(env.get("OPENBLAS_NUM_THREADS")):
+            env["OPENBLAS_NUM_THREADS"] = env["OMP_NUM_THREADS"]
+        return env
+
+    @classmethod
+    def _conda_python(cls, name: str) -> Optional[Path]:
+        """Absolute ``…/envs/<name>/bin/python`` if that conda env exists."""
+        prefix = cls._conda_env_prefix(name)
+        if prefix is None:
+            return None
+        py = prefix / "bin" / "python"
+        return py if py.is_file() else None
+
+    @staticmethod
+    def _conda_env_prefix(name: str) -> Optional[Path]:
+        # Fast path: CONDA_ENVS_PATH / common local layouts (no host-specific paths)
+        envs_roots: list[Path] = []
+        for key in ("CONDA_ENVS_PATH", "CONDA_ENVS_DIRS"):
+            raw = os.environ.get(key) or ""
+            for part in raw.split(os.pathsep):
+                if part.strip():
+                    envs_roots.append(Path(part.strip()))
+        for base in (
+            os.environ.get("CONDA_PREFIX"),
+            os.environ.get("MAMBA_ROOT_PREFIX"),
+            os.path.expanduser("~/miniconda3"),
+            os.path.expanduser("~/anaconda3"),
+            os.path.expanduser("~/mambaforge"),
+            os.path.expanduser("~/miniforge3"),
+        ):
+            if base:
+                envs_roots.append(Path(base) / "envs")
+                # When CONDA_PREFIX is an env itself, sibling envs live next door
+                p = Path(base)
+                if p.name != "envs" and (p.parent / "envs").is_dir():
+                    envs_roots.append(p.parent / "envs")
+        for root in envs_roots:
+            cand = root / name
+            if (cand / "bin" / "python").is_file():
+                return cand
         try:
             r = subprocess.run(
                 ["conda", "env", "list"],
@@ -341,16 +422,20 @@ class DeliveryToolClient:
                 timeout=60,
             )
             if r.returncode != 0:
-                return False
+                return None
             for line in r.stdout.splitlines():
                 if line.startswith("#") or not line.strip():
                     continue
                 parts = line.split()
                 if parts and parts[0] == name:
-                    return True
-            return False
+                    # `name /path` or `name * /path`
+                    path = parts[-1]
+                    p = Path(path)
+                    if (p / "bin" / "python").is_file():
+                        return p
         except (FileNotFoundError, subprocess.TimeoutExpired):
-            return False
+            return None
+        return None
 
     @staticmethod
     def _parse_json_stdout(text: str) -> dict[str, Any]:

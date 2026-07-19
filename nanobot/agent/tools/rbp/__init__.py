@@ -8,7 +8,12 @@ When this package is installed into the real nanobot tree
 ``_plugin_discoverable = True``.
 """
 
-from nanobot.agent.tools.rbp.annotation import GetFuncAnnotationTool, LiteratureSearchTool
+from nanobot.agent.tools.rbp.annotation import (
+    GetFuncAnnotationTool,
+    LiteratureSearchTool,
+    WebFetchRedirectTool,
+    WebSearchRedirectTool,
+)
 from nanobot.agent.tools.rbp.catalogue import GetKnownRBPListTool
 from nanobot.agent.tools.rbp.predict import PredictInteractionTool
 from nanobot.agent.tools.rbp.seq import SeqSimilarityTool
@@ -23,6 +28,8 @@ ALL_RBP_TOOL_CLASSES = [
     GetFuncAnnotationTool,
     PredictStructureTool,
     LiteratureSearchTool,
+    WebSearchRedirectTool,
+    WebFetchRedirectTool,
 ]
 
 __all__ = [
@@ -34,6 +41,8 @@ __all__ = [
     "GetFuncAnnotationTool",
     "PredictStructureTool",
     "LiteratureSearchTool",
+    "WebSearchRedirectTool",
+    "WebFetchRedirectTool",
     "register_all",
 ]
 

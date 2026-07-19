@@ -22,9 +22,23 @@ from nanobot.agent.tools.rbp.common import (
     {
         "type": "object",
         "properties": {
-            "sequence": {"type": "string"},
+            "sequence": {
+                "type": "string",
+                "description": "Protein amino-acid sequence (NOT RNA).",
+            },
             "target_sequence": {"type": "string"},
-            "uniprot": {"type": "string"},
+            "uniprot": {
+                "type": "string",
+                "description": "If sequence omitted, load AA seq from catalogue FASTA.",
+            },
+            "alias": {
+                "type": "string",
+                "description": "Gene symbol / alias; used to load catalogue sequence.",
+            },
+            "query": {
+                "type": "string",
+                "description": "Alias or UniProt if sequence omitted.",
+            },
             "encoder": {"type": "string", "default": "esmc"},
             "device": {
                 "type": "string",
@@ -49,8 +63,9 @@ class SeqSimilarityTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Sequence/embedding similarity vs catalogue. "
-            "Default: delivery esm_similarity (ESM-C). Optional mmseqs via also_mmseqs."
+            "Sequence/embedding similarity vs catalogue (ESM-C). "
+            "Pass protein `sequence`, or `alias`/`uniprot`/`query` to load from "
+            "catalogue FASTA. Never pass RNA. Optional mmseqs via also_mmseqs."
         )
 
     @property
@@ -58,9 +73,32 @@ class SeqSimilarityTool(Tool):
         return True
 
     async def execute(self, **kwargs: Any) -> str:
-        seq = kwargs.get("sequence") or kwargs.get("target_sequence") or ""
+        from nanobot.agent.tools.rbp.common import load_catalogue_sequence
+
+        seq = (kwargs.get("sequence") or kwargs.get("target_sequence") or "").strip()
+        # Reject obvious RNA strings mistaken for protein
+        if seq and set(seq.upper()) <= set("ACGUNacgun"):
+            return dumps(
+                err(
+                    "sequence looks like RNA; seq_similarity needs a protein AA "
+                    "sequence, or pass alias/uniprot to load from catalogue"
+                )
+            )
         if not seq:
-            return dumps(err("sequence or target_sequence required"))
+            for key in ("alias", "uniprot", "query", "rbp_id"):
+                q = kwargs.get(key)
+                if q:
+                    seq = load_catalogue_sequence(str(q)) or ""
+                    if seq:
+                        kwargs.setdefault("uniprot", str(q))
+                        break
+        if not seq:
+            return dumps(
+                err(
+                    "sequence or target_sequence required "
+                    "(or alias/uniprot/query for catalogue RBPs)"
+                )
+            )
 
         def _run():
             device = resolve_device(kwargs.get("device"))

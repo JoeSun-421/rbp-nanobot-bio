@@ -7,10 +7,14 @@ __pycache__/
 **/__pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
+.setup_complete
 .pytest_cache/
 workspace/sessions/*
 !workspace/sessions/.gitkeep
 workspace/memory/*
+workspace/sessions/last_thinking.txt
 *.egg-info/
 dist/
 build/
@@ -18,8 +22,13 @@ build/
 .idea/
 **/.idea/
 *.log
+*.pem
+*.key
 rbp_eval/cache/
 workspace/.nanobot/
+# Never commit live LLM configs
+**/nanobot.config.local.json
+config/*.local.json
 
 # §6.2: nanobot/ is overlay SoT only — never vendor the full framework here.
 # Runtime lives at sibling $BIO_ROOT/nanobot (outside this repo).
