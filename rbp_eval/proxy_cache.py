@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Proposal §7.5 — promote frequent (p* → proxies) mappings to a fast cache.
+"""Promote frequent (p* → proxies) mappings to a fast cache.
 
 When a target repeatedly resolves to the same donor set, Stage 1 can be
 bypassed on subsequent queries (agent reads this cache before multi-view retrieval).
@@ -13,7 +13,17 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Optional
 
-DEFAULT_CACHE = Path(__file__).resolve().parent / "cache" / "proxy_map.json"
+def _default_cache_path() -> Path:
+    try:
+        from rbp_agent.core.paths import PROXY_CACHE
+
+        return PROXY_CACHE
+    except Exception:
+        return Path(__file__).resolve().parents[1] / "artifacts" / "cache" / "proxy_map.json"
+
+
+# Resolved at import for tests that monkeypatch DEFAULT_CACHE.
+DEFAULT_CACHE = _default_cache_path()
 
 
 def load_proxy_cache(path: Optional[Path] = None) -> dict[str, Any]:
@@ -130,14 +140,24 @@ def promote_from_traces(
             continue
         q = row.get("query") or row.get("target") or {}
         if isinstance(q, str):
-            q = {"raw": q}
+            q = {"alias": q}
         uniprot = q.get("uniprot") or row.get("uniprot")
-        alias = q.get("alias") or row.get("alias")
+        alias = q.get("alias") or row.get("alias") or q.get("raw")
+        if not alias and isinstance(row.get("query"), str):
+            alias = row.get("query")
         donors = row.get("donors") or row.get("supporting_rbps") or []
         if not donors:
             v = row.get("verdict") or {}
             donors = v.get("supporting_rbps") or []
         if not donors:
+            continue
+        # skip own-head (single self donor with sim≈1.0)
+        if (
+            len(donors) == 1
+            and isinstance(donors[0], dict)
+            and (donors[0].get("alias") or "") == (alias or "")
+            and float(donors[0].get("similarity_score") or 0) >= 0.999
+        ):
             continue
         record_mapping(
             uniprot=uniprot,

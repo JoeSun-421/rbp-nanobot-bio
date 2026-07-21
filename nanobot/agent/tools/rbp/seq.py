@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Proposal §5 P0 — seq_similarity → delivery esm_similarity (+ optional mmseqs)."""
+"""P0 tool — seq_similarity → delivery esm_similarity (+ optional mmseqs)."""
 
 from __future__ import annotations
 
@@ -12,8 +12,10 @@ from nanobot.agent.tools.rbp.common import (
     dumps,
     err,
     get_delivery_client,
+    looks_like_rna,
     ok,
     resolve_device,
+    resolve_protein_sequence,
     timed_call,
 )
 
@@ -24,16 +26,19 @@ from nanobot.agent.tools.rbp.common import (
         "properties": {
             "sequence": {
                 "type": "string",
-                "description": "Protein amino-acid sequence (NOT RNA).",
+                "description": "Protein AA sequence (≥20). Do NOT pass UniProt/alias here.",
             },
-            "target_sequence": {"type": "string"},
+            "target_sequence": {
+                "type": "string",
+                "description": "Alias of sequence; UniProt/gene IDs are auto-resolved from catalogue.",
+            },
             "uniprot": {
                 "type": "string",
-                "description": "If sequence omitted, load AA seq from catalogue FASTA.",
+                "description": "Preferred: load AA seq from catalogue FASTA (e.g. O43251).",
             },
             "alias": {
                 "type": "string",
-                "description": "Gene symbol / alias; used to load catalogue sequence.",
+                "description": "Preferred: gene symbol (e.g. RBFOX2) → catalogue FASTA.",
             },
             "query": {
                 "type": "string",
@@ -64,8 +69,8 @@ class SeqSimilarityTool(Tool):
     def description(self) -> str:
         return (
             "Sequence/embedding similarity vs catalogue (ESM-C). "
-            "Pass protein `sequence`, or `alias`/`uniprot`/`query` to load from "
-            "catalogue FASTA. Never pass RNA. Optional mmseqs via also_mmseqs."
+            "Pass alias=RBFOX2 or uniprot=O43251 (preferred). "
+            "Protein AA sequences only; UniProt IDs are not valid `sequence` values; RNA is out of scope."
         )
 
     @property
@@ -73,30 +78,27 @@ class SeqSimilarityTool(Tool):
         return True
 
     async def execute(self, **kwargs: Any) -> str:
-        from nanobot.agent.tools.rbp.common import load_catalogue_sequence
-
-        seq = (kwargs.get("sequence") or kwargs.get("target_sequence") or "").strip()
-        # Reject obvious RNA strings mistaken for protein
-        if seq and set(seq.upper()) <= set("ACGUNacgun"):
+        raw = (kwargs.get("sequence") or kwargs.get("target_sequence") or "").strip()
+        if raw and looks_like_rna(raw):
             return dumps(
                 err(
-                    "sequence looks like RNA; seq_similarity needs a protein AA "
-                    "sequence, or pass alias/uniprot to load from catalogue"
+                    "sequence looks like RNA; pass alias/uniprot for the protein, "
+                    "or a real AA sequence"
                 )
             )
+        seq, src = resolve_protein_sequence(kwargs)
         if not seq:
-            for key in ("alias", "uniprot", "query", "rbp_id"):
-                q = kwargs.get(key)
-                if q:
-                    seq = load_catalogue_sequence(str(q)) or ""
-                    if seq:
-                        kwargs.setdefault("uniprot", str(q))
-                        break
-        if not seq:
+            from nanobot.agent.tools.rbp.common import not_in_catalogue_hint
+
+            ids = [
+                str(kwargs.get(k))
+                for k in ("alias", "uniprot", "query", "rbp_id")
+                if kwargs.get(k)
+            ]
             return dumps(
                 err(
-                    "sequence or target_sequence required "
-                    "(or alias/uniprot/query for catalogue RBPs)"
+                    not_in_catalogue_hint(*ids)
+                    + " Or pass protein AA `sequence` ≥20 explicitly."
                 )
             )
 
@@ -104,7 +106,8 @@ class SeqSimilarityTool(Tool):
             device = resolve_device(kwargs.get("device"))
             client = get_delivery_client(device=device)
             hits = []
-            meta = {}
+            meta: dict[str, Any] = {"sequence_source": src, "seq_len": len(seq)}
+            also_mmseqs = bool(kwargs.get("also_mmseqs"))
             esm = client.call(
                 "esm_similarity",
                 {
@@ -122,7 +125,8 @@ class SeqSimilarityTool(Tool):
             }
             if esm.get("hits"):
                 hits.extend(esm["hits"])
-            if kwargs.get("also_mmseqs"):
+            # Auto-fallback to mmseqs when ESM fails (or explicitly requested)
+            if (not hits and esm.get("error")) or also_mmseqs:
                 mm = client.call(
                     "protein_seq_similarity",
                     {"sequence": seq, "top_k": int(kwargs.get("top_k") or 10)},
@@ -130,10 +134,13 @@ class SeqSimilarityTool(Tool):
                 meta["mmseqs"] = {"error": mm.get("error"), "script": mm.get("_script")}
                 if mm.get("hits"):
                     hits.extend(mm["hits"])
+                    meta["fallback"] = "mmseqs"
+                    meta["confidence_hint"] = "low"
             if not hits:
                 raise RuntimeError(
-                    meta.get("esm", {}).get("error")
-                    or "no hits (need protein_embed conda on server)"
+                    (meta.get("esm", {}) or {}).get("error")
+                    or (meta.get("mmseqs", {}) or {}).get("error")
+                    or "no hits (need protein_embed conda / HF weights; do not invent similarity)"
                 )
             return {"hits": hits, "meta": meta}
 

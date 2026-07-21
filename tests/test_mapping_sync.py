@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""mapping.yaml must cover SCRIPT_MAP whitelist + proposal wrappers."""
+"""mapping.yaml covers SCRIPT_MAP whitelist + curated tool wrappers."""
 
 from __future__ import annotations
 
@@ -14,11 +14,13 @@ if str(ROOT) not in sys.path:
 
 
 def test_mapping_covers_stage_whitelist_and_proposal():
-    from backends.delivery.client import SCRIPT_MAP
-    from backends.delivery.registry import PROPOSAL_TOOL_NAMES, STAGE_RAW_WHITELIST
+    from rbp_agent.backends.delivery.client import SCRIPT_MAP
+    from rbp_agent.backends.delivery.registry import PROPOSAL_TOOL_NAMES, STAGE_RAW_WHITELIST
 
     mapping = yaml.safe_load(
-        (ROOT / "backends" / "delivery" / "mapping.yaml").read_text(encoding="utf-8")
+        (ROOT / "rbp_agent" / "backends" / "delivery" / "mapping.yaml").read_text(
+            encoding="utf-8"
+        )
     )
     assert isinstance(mapping, dict)
 
@@ -27,4 +29,4 @@ def test_mapping_covers_stage_whitelist_and_proposal():
         assert name in SCRIPT_MAP, f"whitelist tool {name} missing from SCRIPT_MAP"
 
     for name in PROPOSAL_TOOL_NAMES:
-        assert name in mapping, f"proposal tool {name} missing from mapping.yaml"
+        assert name in mapping, f"curated tool {name} missing from mapping.yaml"

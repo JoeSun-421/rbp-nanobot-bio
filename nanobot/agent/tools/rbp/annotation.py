@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Proposal §5 P1/P2 — get_func_annotation + literature_search."""
+"""P1/P2 tools — get_func_annotation + literature_search."""
 
 from __future__ import annotations
 
@@ -126,8 +126,13 @@ class GetFuncAnnotationTool(Tool):
     {
         "type": "object",
         "properties": {
-            "name": {"type": "string"},
+            "name": {"type": "string", "description": "Gene / RBP symbol"},
             "rbp_name": {"type": "string"},
+            "query": {
+                "type": "string",
+                "description": "Optional Europe PMC query override "
+                "(e.g. MYC AND CLIP AND 2024:2026).",
+            },
             "max_results": {"type": "integer", "default": 5},
         },
         "required": [],
@@ -148,8 +153,9 @@ class LiteratureSearchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Literature / PubMed snippets via delivery literature_retrieval. "
-            "Use this instead of web_search. At most ONE call per query."
+            "Literature via Europe PMC (delivery). Prefer a precise `query` "
+            "(CLIP/eCLIP/RBP + years). Bare name=MYC often returns off-topic hits — "
+            "say so if irrelevant. At most ONE call per query. Not web_search."
         )
 
     @property
@@ -164,25 +170,47 @@ class LiteratureSearchTool(Tool):
                     "continue without more literature calls"
                 )
             )
-        name = kwargs.get("name") or kwargs.get("rbp_name") or ""
-        if not name:
-            return dumps(err("name or rbp_name required"))
+        name = (kwargs.get("name") or kwargs.get("rbp_name") or "").strip()
+        query = (kwargs.get("query") or "").strip()
+        if not name and not query:
+            return dumps(err("name/rbp_name or query required"))
+        # Delivery literature_retrieval requires name/alias even when query= is set.
+        if not name and query:
+            import re
+
+            m = re.search(r"\b([A-Z][A-Z0-9]{1,14})\b", query)
+            name = m.group(1) if m else "RBP"
 
         def _run():
             client = get_delivery_client(offline=False)
-            return client.call(
-                "literature_retrieval",
-                {"name": name, "max_results": int(kwargs.get("max_results") or 5)},
-            )
+            payload: dict[str, Any] = {
+                "name": name,
+                "max_results": int(kwargs.get("max_results") or 5),
+            }
+            if query:
+                payload["query"] = query
+            else:
+                payload["query"] = (
+                    f'("{name}") AND (RBP OR "RNA-binding" OR CLIP OR eCLIP '
+                    f"OR seCLIP OR splicing) AND (FIRST_PDATE:[2020 TO 2026])"
+                )
+            return client.call("literature_retrieval", payload)
 
         out, ms, error = await asyncio.to_thread(lambda: timed_call(_run))
-        LiteratureSearchTool._calls_used += 1
         if error:
             return dumps(err(error, ms))
         if out.get("error") or out.get("skipped"):
+            # Failed attempts do not consume the one-shot budget
             return dumps(err(out.get("error") or out.get("reason") or "skipped", ms))
+        LiteratureSearchTool._calls_used += 1
         return dumps(
-            ok({"papers": out.get("papers") or out.get("results") or []}, ms)
+            ok(
+                {
+                    "papers": out.get("papers") or out.get("results") or [],
+                    "query": out.get("query"),
+                },
+                ms,
+            )
         )
 
 
@@ -253,3 +281,62 @@ class WebFetchRedirectTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         return dumps(err("web_fetch is disabled; use literature_search instead"))
+
+
+def _make_disabled_file_tool(tool_name: str, hint: str) -> type:
+    """Factory for stubs that replace nanobot filesystem tools."""
+
+    @tool_parameters(
+        {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "file_path": {"type": "string"},
+                "pattern": {"type": "string"},
+            },
+            "required": [],
+        }
+    )
+    class _Disabled(Tool):
+        _plugin_discoverable = False
+        _scopes = {"core", "subagent"}
+
+        @property
+        def name(self) -> str:
+            return tool_name
+
+        @property
+        def description(self) -> str:
+            return f"DISABLED for RBP agent. {hint}"
+
+        @property
+        def read_only(self) -> bool:
+            return True
+
+        async def execute(self, **kwargs: Any) -> str:
+            return dumps(
+                err(
+                    f"{tool_name} is disabled; {hint} "
+                    "Use resolve_rbp / get_known_rbp_list(query=...) / "
+                    "seq_similarity(alias=...) instead of reading tool-result files."
+                )
+            )
+
+    _Disabled.__name__ = (
+        "".join(p.title() for p in tool_name.split("_")) + "RedirectTool"
+    )
+    return _Disabled
+
+
+ReadFileRedirectTool = _make_disabled_file_tool(
+    "read_file", "Do not read workspace tool-result dumps."
+)
+GrepRedirectTool = _make_disabled_file_tool(
+    "grep", "Do not grep workspace dumps."
+)
+ListDirRedirectTool = _make_disabled_file_tool(
+    "list_dir", "Filesystem tools are disabled."
+)
+FindFilesRedirectTool = _make_disabled_file_tool(
+    "find_files", "Filesystem tools are disabled."
+)

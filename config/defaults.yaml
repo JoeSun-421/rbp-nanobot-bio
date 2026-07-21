@@ -33,6 +33,9 @@ fusion_weights:
   lddt: 0.3
   function_similarity: 0.4
   saprot_cosine: 0.0
+  # Mock RNA-FM must not pollute fusion; set >0 only with a real RNA_FM_CHECKPOINT.
+  rna_embed: 0.0
+  rna_fm: 0.0
 
 abstain_thresholds:
   esmc_cosine: 0.55
@@ -42,8 +45,10 @@ abstain_thresholds:
   seq_identity: 0.30
   tm_score: 0.5
   fused: 0.45
+  rna_embed: 0.40
+  rna_fm: 0.40
 
-# Proposal §8 four-level labels (also used by llm_touchpoints)
+# Four-level confidence labels (also used by llm_touchpoints)
 label_thresholds:
   strong: 0.75
   likely: 0.50
@@ -67,3 +72,30 @@ llm:
   stage3_explanation: true
 
 near_match_seq_identity: 0.95
+
+# Model capability metadata for doctor / Tool gating (not a second registry).
+models:
+  rhobind:
+    tool: predict_interaction
+    backend: delivery
+    conda_env: rhobind
+    produces: [prob]
+    timeout_s: 180
+    gpu: preferred
+  esm_c:
+    tool: seq_similarity
+    backend: delivery
+    conda_env: protein_embed
+    produces: [RbpHit]
+    cache: artifacts/cache/esm
+  af3:
+    tool: predict_structure
+    backend: delivery
+    conda_env: af3
+    degraded_fallback: afdb_foldseek
+  rna_fm:
+    tool: rna_similarity
+    backend: agent_local
+    mode: mock
+    checkpoint_env: RNA_FM_CHECKPOINT
+    fusion_when_mock: false

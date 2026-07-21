@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Proposal §6.2 — nanobot/agent/tools/rbp/
+Plugin SoT RBP tools — nanobot/agent/tools/rbp/
 
 P0–P2 tools as nanobot.agent.tools.base.Tool subclasses.
 When this package is installed into the real nanobot tree
@@ -9,13 +9,22 @@ When this package is installed into the real nanobot tree
 """
 
 from nanobot.agent.tools.rbp.annotation import (
+    FindFilesRedirectTool,
     GetFuncAnnotationTool,
+    GrepRedirectTool,
+    ListDirRedirectTool,
     LiteratureSearchTool,
+    ReadFileRedirectTool,
     WebFetchRedirectTool,
     WebSearchRedirectTool,
 )
 from nanobot.agent.tools.rbp.catalogue import GetKnownRBPListTool
+from nanobot.agent.tools.rbp.evolve_tools import (
+    FuseSimilarityViewsTool,
+    LookupProxyCacheTool,
+)
 from nanobot.agent.tools.rbp.predict import PredictInteractionTool
+from nanobot.agent.tools.rbp.rna_similarity import RnaSimilarityTool
 from nanobot.agent.tools.rbp.seq import SeqSimilarityTool
 from nanobot.agent.tools.rbp.structure import PredictStructureTool, StructSimilarityTool
 
@@ -24,12 +33,19 @@ ALL_RBP_TOOL_CLASSES = [
     PredictInteractionTool,
     GetKnownRBPListTool,
     SeqSimilarityTool,
+    RnaSimilarityTool,
     StructSimilarityTool,
     GetFuncAnnotationTool,
     PredictStructureTool,
     LiteratureSearchTool,
+    LookupProxyCacheTool,
+    FuseSimilarityViewsTool,
     WebSearchRedirectTool,
     WebFetchRedirectTool,
+    ReadFileRedirectTool,
+    GrepRedirectTool,
+    ListDirRedirectTool,
+    FindFilesRedirectTool,
 ]
 
 __all__ = [
@@ -37,18 +53,25 @@ __all__ = [
     "PredictInteractionTool",
     "GetKnownRBPListTool",
     "SeqSimilarityTool",
+    "RnaSimilarityTool",
     "StructSimilarityTool",
     "GetFuncAnnotationTool",
     "PredictStructureTool",
     "LiteratureSearchTool",
+    "LookupProxyCacheTool",
+    "FuseSimilarityViewsTool",
     "WebSearchRedirectTool",
     "WebFetchRedirectTool",
+    "ReadFileRedirectTool",
+    "GrepRedirectTool",
+    "ListDirRedirectTool",
+    "FindFilesRedirectTool",
     "register_all",
 ]
 
 
 def register_all(registry) -> list[str]:
-    """Instantiate and register all proposal RBP tools on a ToolRegistry."""
+    """Instantiate and register all curated RBP tools on a ToolRegistry."""
     names = []
     for cls in ALL_RBP_TOOL_CLASSES:
         tool = cls()

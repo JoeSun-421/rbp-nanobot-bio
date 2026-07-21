@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Shared helpers for RBP tools (proposal §5–§6.2).
+Shared helpers for RBP tools.
 
 Path (source of truth)::
     nanobot-bio/nanobot/agent/tools/rbp/common.py
@@ -19,7 +19,7 @@ from typing import Any, Optional
 
 
 def ensure_nanobot_bio_on_path() -> Path:
-    """Locate nanobot-bio root (backends/delivery) and put it on sys.path."""
+    """Locate nanobot-bio root and put it on sys.path."""
     env = os.environ.get("NANOBOT_BIO_ROOT")
     candidates: list[Path] = []
     if env:
@@ -37,18 +37,23 @@ def ensure_nanobot_bio_on_path() -> Path:
         candidates.append(Path(bio) / "nanobot-bio")
         candidates.append(Path(bio))
 
+    def _is_bio_root(c: Path) -> bool:
+        return (c / "rbp_agent" / "backends" / "delivery" / "client.py").is_file() or (
+            c / "backends" / "delivery" / "client.py"
+        ).is_file()
+
     for c in candidates:
         try:
             c = c.resolve()
         except OSError:
             continue
-        if (c / "backends" / "delivery" / "client.py").is_file():
+        if _is_bio_root(c):
             if str(c) not in sys.path:
                 sys.path.append(str(c))
             os.environ.setdefault("NANOBOT_BIO_ROOT", str(c))
             return c
     raise FileNotFoundError(
-        "Cannot find nanobot-bio (backends/delivery). "
+        "Cannot find nanobot-bio (rbp_agent/backends/delivery). "
         "Set NANOBOT_BIO_ROOT=/path/to/nanobot-bio"
     )
 
@@ -131,8 +136,8 @@ def get_delivery_client(
     use_conda: bool = True,
 ):
     ensure_nanobot_bio_on_path()
-    from backends.delivery.client import DeliveryToolClient
-    from backends.delivery.env import apply_delivery_env
+    from rbp_agent.backends.delivery.client import DeliveryToolClient
+    from rbp_agent.backends.delivery.env import apply_delivery_env
 
     apply_delivery_env()
     return DeliveryToolClient(
@@ -197,6 +202,202 @@ def load_catalogue_sequence(query: str) -> Optional[str]:
     except OSError:
         return None
     return None
+
+
+def looks_like_accession_or_alias(text: str) -> bool:
+    """True if ``text`` is a UniProt/gene token, not a protein AA string."""
+    s = (text or "").strip()
+    if not s or len(s) > 32 or any(ch.isspace() for ch in s):
+        return False
+    # UniProt accession (e.g. O43251, Q9Y5A9, P26599, A0A0B4J2F0)
+    import re
+
+    if re.fullmatch(r"[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2}", s, re.I):
+        return True
+    # Gene / alias tokens (RBFOX2, PTBP1) — short, no digits-only, mostly alnum
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{1,24}", s) and any(c.isalpha() for c in s):
+        # Reject obvious AA peptides (high fraction of valid AA letters, length>=20 handled elsewhere)
+        if len(s) <= 15:
+            return True
+    return False
+
+
+def looks_like_rna(seq: str) -> bool:
+    s = (seq or "").strip().upper().replace(" ", "")
+    if len(s) < 8:
+        return False
+    return set(s) <= set("ACGTUN")
+
+
+def looks_like_dummy_protein(seq: str) -> bool:
+    """Detect invented poly-X / poly-A junk the LLM sometimes fabricates."""
+    s = (seq or "").strip().upper().replace(" ", "")
+    if len(s) < 20:
+        return False
+    from collections import Counter
+
+    c = Counter(s)
+    top_n, top_cnt = c.most_common(1)[0]
+    if top_cnt / len(s) >= 0.85 and top_n in "ACDEFGHIKLMNPQRSTVWY":
+        return True
+    return False
+
+
+def fetch_uniprot_sequence(accession: str, *, timeout: float = 25.0) -> Optional[str]:
+    """Fetch AA sequence from UniProt REST FASTA (agent-side; does not edit delivery)."""
+    import re
+    import time
+    import urllib.error
+    import urllib.request
+
+    acc = (accession or "").strip().upper()
+    if not re.fullmatch(
+        r"[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2}",
+        acc,
+    ):
+        return None
+    url = f"https://rest.uniprot.org/uniprotkb/{acc}.fasta"
+    last_err: Optional[BaseException] = None
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                text = resp.read().decode("utf-8", errors="replace")
+            lines = [
+                ln.strip()
+                for ln in text.splitlines()
+                if ln.strip() and not ln.startswith(">")
+            ]
+            seq = "".join(lines).upper()
+            if len(seq) >= 20:
+                return seq
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last_err = e
+            if attempt == 0:
+                time.sleep(0.6)
+    del last_err
+    return None
+
+
+def resolve_protein_sequence(kwargs: dict[str, Any]) -> tuple[str, Optional[str]]:
+    """Resolve AA sequence from kwargs.
+
+    Returns ``(sequence, source)`` where source is
+    ``sequence`` | ``catalogue`` | ``uniprot_rest`` | None.
+    If ``sequence``/``target_sequence`` is actually an accession/alias, load FASTA
+    (or UniProt REST for accessions outside the RBP catalogue).
+    """
+    raw = (kwargs.get("sequence") or kwargs.get("target_sequence") or "").strip()
+    if raw and looks_like_accession_or_alias(raw):
+        loaded = load_catalogue_sequence(raw)
+        if loaded:
+            return loaded, "catalogue"
+        # UniProt accession outside catalogue → REST (never treat ID as AA)
+        rest = fetch_uniprot_sequence(raw)
+        if rest:
+            return rest, "uniprot_rest"
+        return "", None
+    if raw and looks_like_rna(raw):
+        return "", None
+    if raw and looks_like_dummy_protein(raw):
+        return "", None
+    if raw and len(raw) >= 20:
+        return raw.upper(), "sequence"
+
+    for key in ("alias", "uniprot", "query", "rbp_id", "name"):
+        q = kwargs.get(key)
+        if not q:
+            continue
+        q = str(q).strip()
+        loaded = load_catalogue_sequence(q)
+        if loaded:
+            return loaded, "catalogue"
+        rest = fetch_uniprot_sequence(q)
+        if rest:
+            return rest, "uniprot_rest"
+    return (raw.upper() if raw and len(raw) >= 20 else ""), None
+
+
+def not_in_catalogue_hint(*ids: str) -> str:
+    """Short reason when tools fail because the protein is outside RhoBind K."""
+    shown = "/".join(x for x in ids if x) or "this protein"
+    return (
+        f"{shown} is not in the RhoBind RBP catalogue (~238). "
+        "seq/struct catalogue tools need a real AA `sequence` (auto-fetched from "
+        "UniProt when you pass a valid accession), or abstain with p_hat=null / "
+        "confidence=low. Do not invent sequences or loop AF3."
+    )
+
+
+def catalogue_pdb_path(*, uniprot: str = "", alias: str = "") -> Optional[Path]:
+    """Resolve AFDB PDB under ``AFDB_DIR`` (``ALIAS_UNIPROT.pdb``)."""
+    afdb = os.environ.get("AFDB_DIR")
+    if not afdb:
+        return None
+    root = Path(afdb)
+    if not root.is_dir():
+        return None
+    u = (uniprot or "").strip()
+    a = (alias or "").strip()
+    cands: list[Path] = []
+    if a and u:
+        cands.append(root / f"{a}_{u}.pdb")
+    if u:
+        cands.extend(root.glob(f"*_{u}.pdb"))
+        cands.append(root / f"{u}.pdb")
+    if a:
+        cands.extend(root.glob(f"{a}_*.pdb"))
+    for p in cands:
+        if p.is_file():
+            return p
+    return None
+
+
+def _structure_cache_dir() -> Path:
+    try:
+        root = ensure_nanobot_bio_on_path()
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        from rbp_agent.core.paths import STRUCTURE_CACHE, ensure_artifact_dirs
+
+        ensure_artifact_dirs()
+        return STRUCTURE_CACHE
+    except Exception:
+        fallback = Path(os.environ.get("NANOBOT_BIO_ROOT", ".")) / "artifacts" / "cache" / "structure"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+def structure_cache_get(key: str, *, ttl_s: float = 7 * 24 * 3600) -> Optional[dict[str, Any]]:
+    """Return cached structure-tool payload if fresh (success or failure)."""
+    import hashlib
+
+    safe = hashlib.sha256(key.encode("utf-8")).hexdigest()[:40]
+    path = _structure_cache_dir() / f"{safe}.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        ts = float(data.get("ts") or 0)
+        if time.time() - ts > float(ttl_s):
+            return None
+        return data.get("payload")
+    except Exception:
+        return None
+
+
+def structure_cache_put(key: str, payload: dict[str, Any]) -> None:
+    """Disk-cache AF3/structure results (including failures) to avoid 200s+ repeats."""
+    import hashlib
+
+    safe = hashlib.sha256(key.encode("utf-8")).hexdigest()[:40]
+    path = _structure_cache_dir() / f"{safe}.json"
+    try:
+        path.write_text(
+            json.dumps({"ts": time.time(), "key": key, "payload": payload}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
 
 
 def dumps(obj: Any) -> str:

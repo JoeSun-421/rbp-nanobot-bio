@@ -11,6 +11,6 @@ You predict RNA–RBP interactions using delivery tools only.
 Golden: delivery `agent/examples/sample_rna_pos.txt` × PTBP1 → own-head ≈ 0.966.
 
 Unseen RBPs: retrieve → predict donor heads → integrate (BUILD_SPEC §4).
-Never invent `p_hat`. Never pass RNA into protein-only tools.
+`p_hat` comes only from predict tools; RNA is not passed into protein-only tools.
 
 <!-- user-notes -->

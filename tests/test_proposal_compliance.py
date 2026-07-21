@@ -53,7 +53,7 @@ def test_percent_identity_normalized_before_clamp():
 
 
 def test_fuse_proxy_candidates_respects_tau_and_ncand():
-    from rbp_eval.fusion import fuse_proxy_candidates
+    from rbp_eval.fuse_hits import fuse_proxy_candidates
 
     fused = fuse_proxy_candidates(
         {
@@ -80,7 +80,7 @@ def test_fuse_proxy_candidates_respects_tau_and_ncand():
 
 
 def test_label_thresholds_proposal():
-    from core.verdict_schema import label_from_p_hat
+    from rbp_agent.core.verdict_schema import label_from_p_hat
 
     assert label_from_p_hat(0.80) == "Strong"
     assert label_from_p_hat(0.60) == "Likely"
@@ -90,7 +90,7 @@ def test_label_thresholds_proposal():
 
 def test_stage3_verdict_from_llm_json():
     """LLM touchpoints live in Nanobot+SKILL; verdict parse is still core."""
-    from core.verdict_schema import extract_verdict_from_content
+    from rbp_agent.core.verdict_schema import extract_verdict_from_content
 
     content = json.dumps(
         {
@@ -108,7 +108,7 @@ def test_stage3_verdict_from_llm_json():
 
 
 def test_stage1_deterministic_fusion_in_rbp_eval():
-    from rbp_eval.fusion import fuse_proxy_candidates
+    from rbp_eval.fuse_hits import fuse_proxy_candidates
 
     proxies = fuse_proxy_candidates(
         {
@@ -139,8 +139,8 @@ def test_defaults_match_proposal():
 
 
 def test_proposal_tool_names_registered():
-    """P0–P2 come from nanobot.agent.tools.rbp (single source); names match Table 2."""
-    from backends.delivery.registry import STAGE_RAW_WHITELIST, build_proposal_tools
+    """P0–P2 tools come from nanobot.agent.tools.rbp (single source of truth)."""
+    from rbp_agent.backends.delivery.registry import STAGE_RAW_WHITELIST, build_proposal_tools
 
     tools = build_proposal_tools()
     names = {t.name for t in tools}
@@ -152,8 +152,11 @@ def test_proposal_tool_names_registered():
         "get_func_annotation",
         "predict_structure",
         "literature_search",
+        "lookup_proxy_cache",
+        "fuse_similarity_views",
+        "rna_similarity",
     ):
-        assert required in names, f"missing proposal tool {required}"
+        assert required in names, f"missing curated tool {required}"
     # Tools are the rbp package classes, not a second wrapper stack
     assert any("nanobot.agent.tools.rbp" in type(t).__module__ for t in tools)
     assert "literature_retrieval" not in STAGE_RAW_WHITELIST
@@ -161,16 +164,17 @@ def test_proposal_tool_names_registered():
 
 
 def test_delivery_tree_untouched_marker():
-    """Sanity: delivery package exists and agent must not rewrite its scripts."""
+    """Sanity: delivery package exists; science calls go through DeliveryToolClient."""
     delivery = ROOT.parent / "rhobind_agent_delivery"
     assert delivery.is_dir()
-    # agent must call via DeliveryToolClient, not invent science
-    client_src = (ROOT / "backends" / "delivery" / "client.py").read_text(encoding="utf-8")
+    client_src = (
+        ROOT / "rbp_agent" / "backends" / "delivery" / "client.py"
+    ).read_text(encoding="utf-8")
     assert "DeliveryToolClient" in client_src
 
 
 def test_near_match_threshold():
-    from core.verdict_schema import is_near_match_score
+    from rbp_agent.core.verdict_schema import is_near_match_score
 
     assert is_near_match_score(0.95) is True
     assert is_near_match_score(0.94) is False
@@ -180,12 +184,13 @@ def test_stage1_before_predict_in_skill_playbook():
     """Regression: SKILL playbook orders Stage 1 retrieval before Stage 2 predict."""
     skill = ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
     src = skill.read_text(encoding="utf-8")
-    i_s0 = src.find("### Stage 0 — Own-head")
-    i_s1 = src.find("### Stage 1 — Multi-view retrieval")
-    i_s2 = src.find("### Stage 2 — Predict on proxies")
+    i_s0 = src.find("## Stage 0")
+    i_s1 = src.find("## Stage 1")
+    i_s2 = src.find("## Stage 2")
     assert i_s0 > 0 and i_s1 > 0 and i_s2 > 0
     assert i_s0 < i_s1 < i_s2
-
+    assert "Retrieve" in src[i_s1 : i_s1 + 80] or "retrieval" in src[i_s1 : i_s1 + 80].lower()
+    assert "Predict" in src[i_s2 : i_s2 + 80]
 
 def test_mvp_tool_whitelist_excludes_literature_raw():
     from nanobot.agent.tools.registry import ToolRegistry
@@ -195,4 +200,89 @@ def test_mvp_tool_whitelist_excludes_literature_raw():
     assert "literature_retrieval" not in names
     assert "resolve_rbp" in names
     assert "predict_interaction" in names
-    assert len(names) <= 20
+    # Curated P0–P2 + Stage 0/3 whitelist (count drifts with registry; keep bounded)
+    assert 15 <= len(names) <= 30
+
+
+def test_skill_playbook_locks_proposal_defaults_and_paths():
+    """Proposal §4 / §8 + gate: SKILL must encode near-known, tau, N_cand, stages, caveats."""
+    skill = ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
+    src = skill.read_text(encoding="utf-8")
+    assert "near-known" in src
+    assert "0.30" in src or "0.3" in src
+    assert "N_cand" in src or "n_cand" in src.lower()
+    assert "## Stage 3" in src
+    assert "caveat" in src.lower()
+    # Unseen path: retrieve before predict; own-head stops without transfer
+    assert "in_panel=true" in src or "Own-head" in src or "own-head" in src
+    assert "Stage 1" in src and "Stage 2" in src
+    for key in ("label", "p_hat", "confidence", "explanation", "supporting_rbps"):
+        assert key in src, f"verdict field {key} missing from SKILL"
+
+
+def test_similarity_breakdown_in_fuse_and_verdict_supports_caveats():
+    """Proposal §4 proxy object + IR caveats field."""
+    from rbp_eval.fuse_hits import fuse_proxy_candidates
+    from rbp_agent.core.verdict_schema import normalize_verdict
+
+    proxies = fuse_proxy_candidates(
+        {"seq": [{"alias": "ELAVL1", "score": 0.9}]},
+        n_cand=5,
+        tau_drop=0.30,
+    )
+    assert proxies and "similarity_breakdown" in proxies[0]
+
+    v = normalize_verdict(
+        {
+            "label": "Likely",
+            "p_hat": 0.6,
+            "confidence": 0.7,
+            "explanation": "Grounded on tool scores only.",
+            "supporting_rbps": [],
+            "caveats": ["structure_axis unavailable"],
+        }
+    )
+    assert v.get("caveats") == ["structure_axis unavailable"]
+    assert isinstance(v.get("confidence"), (int, float, str))
+
+
+def test_proposal_sot_tool_modules_exist_at_transition_path():
+    """Proposal §6.2 target is repo-root agent/tools/rbp/; current SoT is nanobot/agent/tools/rbp/."""
+    sot = ROOT / "nanobot" / "agent" / "tools" / "rbp"
+    for name in (
+        "predict.py",
+        "catalogue.py",
+        "seq.py",
+        "structure.py",
+        "annotation.py",
+        "common.py",
+    ):
+        assert (sot / name).is_file(), f"missing SoT module {name}"
+    assert (ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md").is_file()
+    # Soft: if layout is migrated to PDF §6.2, accept that tree too
+    legacy = ROOT / "agent" / "tools" / "rbp"
+    if legacy.is_dir():
+        assert (legacy / "predict.py").is_file() or (sot / "predict.py").is_file()
+
+
+def test_proposal_documents_present():
+    """Engineering guide §9 is the in-repo gate SoT; proposal PDFs are optional/external."""
+    guide = (ROOT / "docs" / "工程指南.zh.md").read_text(encoding="utf-8")
+    assert "## 9. 改动门禁" in guide
+    assert "Proposal" in guide or "提案" in guide
+
+
+def test_evolved_live_requires_decision_artifact_when_present():
+    """If live evolved.yaml claims evolved:true, prefer an evolve-eval decision note when it exists."""
+    import yaml
+
+    evolved = ROOT / "config" / "evolved.yaml"
+    if not evolved.is_file():
+        return
+    cfg = yaml.safe_load(evolved.read_text(encoding="utf-8")) or {}
+    if not cfg.get("evolved"):
+        return
+    decision = ROOT / "artifacts" / "reports" / "evolve_eval_decision.md"
+    if decision.is_file():
+        text = decision.read_text(encoding="utf-8")
+        assert "HOLD" in text or "PROMOTE" in text or "promote" in text.lower()

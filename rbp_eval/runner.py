@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Proposal §6.2 — rbp_eval/runner.py
+Evaluation package runner — rbp_eval/runner.py
 
 Batch-run validation queries, write JSONL traces (AgentHook-compatible),
 feed the self-evolution evaluator.
@@ -13,11 +13,14 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1]  # nanobot-bio
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
+from rbp_agent.core.paths import DEFAULT_EVAL_TRACE, DEFAULT_VAL_BATCH, ensure_artifact_dirs
 from rbp_eval.hooks import JsonlTraceHook
+
+ensure_artifact_dirs()
 
 DEFAULT_VAL_RBPS = [
     "NSUN2",
@@ -39,7 +42,7 @@ def load_default_val_cases(
     force_transfer: bool = True,
 ) -> list[dict[str, Any]]:
     """Build D_val-style cases from delivery LOO hold-out list + sample RNA."""
-    from backends.delivery.env import apply_delivery_env, delivery_root
+    from rbp_agent.backends.delivery.env import apply_delivery_env, delivery_root
 
     apply_delivery_env()
     ex = delivery_root() / "agent" / "examples"
@@ -65,7 +68,7 @@ def load_default_val_cases(
 def run_batch(
     cases: Iterable[dict[str, Any]],
     *,
-    trace_path: str | Path = "rbp_eval/traces/eval_run.jsonl",
+    trace_path: str | Path | None = None,
     offline: bool = True,
     device: str = "auto",
     config: Optional[dict[str, Any]] = None,
@@ -79,45 +82,166 @@ def run_batch(
     )
 
 
+def _safe_hits(out: Any) -> list[dict[str, Any]]:
+    if not isinstance(out, dict):
+        return []
+    # unwrap error
+    if out.get("error") or (out.get("ok") is False and "hits" not in out):
+        return []
+    hits = out.get("hits")
+    if isinstance(hits, list):
+        return [h for h in hits if isinstance(h, dict)]
+    return []
+
+
 def run_loo_val_batch(
     *,
     top_k: int = 5,
-    trace_path: str | Path = "rbp_eval/traces/loo_val.jsonl",
+    trace_path: str | Path | None = None,
     offline: bool = True,
+    with_esm: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, list[list[dict[str, Any]]]]]:
     """
-    LOO-style val (retrieval-only): domain hits per held RBP for weight retune.
-    Does **not** run a fixed pipeline; prediction stays on the Nanobot agent path.
+    LOO-style val (retrieval-only): multi-view hits per held RBP for weight retune.
+
+    Always runs ``domain_architecture``. Optionally ``esm_similarity`` (RAM-heavy).
+    Does **not** run RhoBind; prediction stays on the Nanobot agent path.
     """
-    from backends.delivery.client import DeliveryToolClient
-    from backends.delivery.env import apply_delivery_env
-    from core.verdict_schema import normalize_verdict
+    from rbp_agent.backends.delivery.client import DeliveryToolClient
+    from rbp_agent.backends.delivery.env import apply_delivery_env
+    from rbp_agent.core.verdict_schema import normalize_verdict
+    from rbp_eval.fuse_hits import fuse_rbp_hits
 
     apply_delivery_env()
-    client = DeliveryToolClient(offline=offline, device="cpu", use_conda=False)
+    # use_conda for ESM path when requested; domain can run without
+    client = DeliveryToolClient(
+        offline=offline,
+        device="cpu",
+        use_conda=bool(with_esm),
+    )
     cases = load_default_val_cases(force_transfer=True)
     held_hits: dict[str, list[list[dict[str, Any]]]] = {}
-    tp = Path(trace_path)
+    tp = Path(trace_path or DEFAULT_EVAL_TRACE)
     if not tp.is_absolute():
         tp = ROOT / tp
     hook = JsonlTraceHook(tp, session_key="rbp:eval")
     results: list[dict[str, Any]] = []
+    axes_used_global: set[str] = set()
 
     for i, case in enumerate(cases):
         alias = case["query"]
         hook.push_event({"type": "query_start", "index": i, "case_keys": list(case.keys())})
-        dom = client.call(
-            "domain_architecture",
-            {"alias": alias, "top_k": top_k * 2, "network": False},
-        )
-        hits = list(dom.get("hits") or [])
-        held_hits[alias] = [hits]
+        lists: list[list[dict[str, Any]]] = []
+        retrieval: dict[str, Any] = {}
+        axes_used: list[str] = []
+
+        # Domain axis (cheap, no GPU)
+        try:
+            dom = client.call(
+                "domain_architecture",
+                {"alias": alias, "top_k": top_k * 2, "network": False},
+            )
+            dom_hits = _safe_hits(dom)
+            if not dom_hits and isinstance(dom, dict) and dom.get("error"):
+                retrieval["domain"] = {"ok": False, "error": str(dom.get("error"))[:300]}
+            else:
+                retrieval["domain"] = {"ok": bool(dom_hits), "n": len(dom_hits)}
+                if dom_hits:
+                    lists.append(dom_hits)
+                    axes_used.append("domain")
+                    axes_used_global.add("domain")
+        except Exception as e:
+            retrieval["domain"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+        # ESM axis (optional): delivery esm_embed requires AA `sequence` (alias alone fails)
+        if with_esm:
+            try:
+                import os
+
+                from nanobot.agent.tools.rbp.common import load_catalogue_sequence
+
+                seq = load_catalogue_sequence(alias) or ""
+                uniprot = None
+                if not seq:
+                    res = client.call("resolve_rbp", {"query": alias})
+                    if isinstance(res, dict):
+                        seq = str(res.get("sequence") or "")
+                        uniprot = res.get("uniprot")
+                if not seq:
+                    retrieval["esm_similarity"] = {
+                        "ok": False,
+                        "error": f"no AA sequence for {alias}",
+                    }
+                else:
+                    dev = os.environ.get("RHOBIND_DEVICE", "cpu")
+                    if dev == "auto":
+                        dev = "cuda"
+                    if dev not in ("cuda", "cpu"):
+                        dev = "cpu"
+                    payload: dict[str, Any] = {
+                        "sequence": seq,
+                        "encoder": "esmc",
+                        "device": dev,
+                        "top_k": top_k * 2,
+                    }
+                    if uniprot:
+                        payload["uniprot"] = uniprot
+                    esm = client.call("esm_similarity", payload)
+                    esm_hits = _safe_hits(esm)
+                    if esm_hits:
+                        lists.append(esm_hits)
+                        axes_used.append("esm")
+                        axes_used_global.add("esm")
+                        retrieval["esm_similarity"] = {"ok": True, "n": len(esm_hits)}
+                    else:
+                        err = ""
+                        if isinstance(esm, dict):
+                            err = str(
+                                esm.get("error")
+                                or esm.get("reason")
+                                or ""
+                            )[:300]
+                        retrieval["esm_similarity"] = {
+                            "ok": False,
+                            "error": err or "no hits",
+                        }
+            except Exception as e:
+                retrieval["esm_similarity"] = {
+                    "ok": False,
+                    "error": f"{type(e).__name__}: {e}"[:300],
+                }
+
+        donors = fuse_rbp_hits(
+            lists,
+            top_k=top_k,
+            exclude_aliases={alias},
+            use_rank_normalize=True,
+            tau_drop=0.30,
+        ) if lists else []
+        # fallback: raw domain top_k
+        if not donors and lists:
+            flat = []
+            for lst in lists:
+                flat.extend(lst)
+            donors = flat[:top_k]
+
+        held_hits[alias] = lists if lists else [[]]
         out = {
-            "query": alias,
+            "query": {"alias": alias},
             "mode": "retrieval_only",
-            "donors": hits[:top_k],
+            "donors": donors,
             "errors": [],
-            "retrieval": {"domain": {"ok": bool(hits), "n": len(hits)}},
+            "retrieval": retrieval,
+            "axes_used": axes_used,
+            "evidence_table": [
+                {
+                    "alias": d.get("alias"),
+                    "uniprot": d.get("uniprot"),
+                    "score": d.get("score"),
+                    "sim_by_modality": d.get("sim_by_modality") or {},
+                }
+                for d in donors
+            ],
         }
         out["verdict"] = normalize_verdict(
             {
@@ -126,11 +250,17 @@ def run_loo_val_batch(
                 "confidence": "low",
                 "explanation": (
                     f"Retrieval-only LOO stub for {alias} "
-                    f"(n_domain_hits={len(hits)}); score via Nanobot agent."
+                    f"(axes={axes_used}, n_donors={len(donors)}); "
+                    "score via Nanobot agent."
                 ),
                 "supporting_rbps": [
-                    {"alias": h.get("alias"), "similarity_score": h.get("score")}
-                    for h in hits[:top_k]
+                    {
+                        "alias": h.get("alias"),
+                        "rbp_id": h.get("uniprot"),
+                        "similarity_score": h.get("score"),
+                        "prob": None,
+                    }
+                    for h in donors
                 ],
             }
         )
@@ -138,14 +268,20 @@ def run_loo_val_batch(
             {
                 "type": "query_end",
                 "index": i,
-                "query": alias,
+                "query": {"alias": alias},
+                "alias": alias,
                 "mode": out["mode"],
                 "donors": out["donors"],
                 "verdict": out["verdict"],
                 "errors": out["errors"],
+                "axes_used": axes_used,
             }
         )
         results.append(out)
+
+    # annotate first result with global axes for report consumers
+    if results:
+        results[0]["axes_used_global"] = sorted(axes_used_global)
     return results, held_hits
 
 
@@ -174,19 +310,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     from rbp_eval.evaluator import run_self_evolution, summarize_verdicts
 
     ap = argparse.ArgumentParser(description="Batch val runner + optional self-evolution")
-    ap.add_argument("--evolve", action="store_true", help="Run §7 self-evolution after batch")
+    ap.add_argument("--evolve", action="store_true", help="Run self-evolution after batch")
     ap.add_argument("--top-k", type=int, default=5)
+    ap.add_argument("--with-esm", action="store_true")
     ap.add_argument(
         "--trace",
-        default="rbp_eval/traces/loo_val.jsonl",
+        default=str(DEFAULT_EVAL_TRACE),
         help="JSONL trace path",
     )
-    ap.add_argument("--out", default="out/val_batch_results.json")
+    ap.add_argument("--out", default=str(DEFAULT_VAL_BATCH))
     args = ap.parse_args(argv)
 
-    results, held_hits = run_loo_val_batch(top_k=args.top_k, trace_path=args.trace)
+    results, held_hits = run_loo_val_batch(
+        top_k=args.top_k, trace_path=args.trace, with_esm=bool(args.with_esm)
+    )
     summary = summarize_verdicts(results)
-    out_path = ROOT / args.out
+    out_path = Path(args.out)
+    if not out_path.is_absolute():
+        out_path = ROOT / out_path
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps(

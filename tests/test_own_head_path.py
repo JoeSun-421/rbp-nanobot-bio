@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 
 
 def test_skill_always_on_and_own_head_playbook(tmp_path):
-    from integrate import ensure_workspace_skill
+    from rbp_agent.integrate import ensure_workspace_skill
     from nanobot.agent.skills import SkillsLoader
 
     skill = ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
@@ -30,7 +30,7 @@ def test_skill_always_on_and_own_head_playbook(tmp_path):
 
 
 def test_delivery_example_pos_rna_matches_readme():
-    from backends.delivery.examples import load_example, own_head_prompt
+    from rbp_agent.backends.delivery.examples import load_example, own_head_prompt
 
     ex = load_example("pos")
     assert ex["query"] == "PTBP1"
@@ -45,7 +45,7 @@ def test_delivery_example_pos_rna_matches_readme():
 
 
 def test_resolve_ptbp1_in_panel():
-    from backends.delivery.client import DeliveryToolClient
+    from rbp_agent.backends.delivery.client import DeliveryToolClient
 
     r = DeliveryToolClient(offline=True, use_conda=False).call(
         "resolve_rbp", {"query": "PTBP1"}
@@ -95,7 +95,7 @@ def test_predict_envelope_marks_own_head_path():
 
 
 def test_workspace_skill_sync_copies_always_frontmatter(tmp_path):
-    from integrate import ensure_workspace_skill
+    from rbp_agent.integrate import ensure_workspace_skill
 
     dest = ensure_workspace_skill(tmp_path)
     text = dest.read_text(encoding="utf-8")

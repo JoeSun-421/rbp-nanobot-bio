@@ -73,7 +73,7 @@ def test_resolve_device_auto_does_not_import_torch(monkeypatch):
 
 
 def test_onboard_catalog_covers_mainstream_vendors():
-    from core.onboard import FEATURED, PROVIDER_MODELS, list_models_text, models_for
+    from rbp_agent.core.onboard import FEATURED, PROVIDER_MODELS, list_models_text, models_for
 
     required = {
         "openai",

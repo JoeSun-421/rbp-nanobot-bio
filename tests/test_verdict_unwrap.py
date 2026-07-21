@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
 
 
 def test_unwrap_fenced_json_inside_explanation():
-    from core.verdict_schema import extract_verdict_from_content
+    from rbp_agent.core.verdict_schema import extract_verdict_from_content
 
     messy = """{
   "label": "No",
@@ -28,7 +28,7 @@ def test_unwrap_fenced_json_inside_explanation():
 
 
 def test_parse_markdown_fenced_verdict():
-    from core.verdict_schema import extract_verdict_from_content
+    from rbp_agent.core.verdict_schema import extract_verdict_from_content
 
     content = """Here is the result:
 ```json
@@ -49,8 +49,8 @@ def test_parse_markdown_fenced_verdict():
 
 def test_terminal_style_nested_fence_in_explanation():
     """Exact failure mode from rbp-agent chat: JSON dumped into explanation."""
-    from core.chat_ux import format_verdict_display
-    from core.verdict_schema import extract_verdict_from_content
+    from rbp_agent.core.chat_ux import format_verdict_display
+    from rbp_agent.core.verdict_schema import extract_verdict_from_content
 
     # After json.loads of the outer object, explanation has real newlines + fence
     outer = {
@@ -86,3 +86,32 @@ def test_terminal_style_nested_fence_in_explanation():
     shown = format_verdict_display(SimpleNamespace(content=content, verdict=None))
     assert "```" not in shown
     assert "PTBP1 own-head failed with OOM (rc=137)." in shown
+
+
+def test_prior_missing_and_structure_flags_force_low_confidence():
+    from rbp_agent.core.verdict_schema import normalize_verdict
+
+    v = normalize_verdict(
+        {
+            "label": "Likely",
+            "p_hat": 0.55,
+            "confidence": "high",
+            "explanation": "transfer vote",
+            "supporting_rbps": [],
+            "prior_missing": True,
+        }
+    )
+    assert v["confidence"] == "low"
+    assert v.get("prior_missing") is True
+
+    v2 = normalize_verdict(
+        {
+            "label": "Likely",
+            "p_hat": 0.55,
+            "confidence": "high",
+            "explanation": "sequence-only",
+            "supporting_rbps": [],
+            "evidence_flags": {"structure_unavailable": True},
+        }
+    )
+    assert v2["confidence"] == "low"

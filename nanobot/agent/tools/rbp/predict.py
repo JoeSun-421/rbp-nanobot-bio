@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Proposal §5 P0 — predict_interaction
-Path (proposal §6.2): nanobot/agent/tools/rbp/predict.py
+P0 tool — predict_interaction
+Path: nanobot/agent/tools/rbp/predict.py
 
 nanobot Tool → delivery ``rhobind_predict`` (agent/backbone/predict_api.py).
 """
@@ -177,8 +177,36 @@ class PredictInteractionTool(Tool):
             PredictInteractionTool._cache[key] = result
             return result
         preds = out.get("predictions") or []
-        # BUILD_SPEC §4: single in-panel alias = own-head score → agent must stop.
+        # BUILD_SPEC: single in-panel alias = own-head score → Stage-0 path stops.
         path = "own_head" if len(rbps_list) == 1 else "multi_head"
+        probs = [
+            p.get("prob")
+            for p in preds
+            if isinstance(p, dict) and p.get("prob") is not None
+        ]
+        if not probs:
+            # e.g. unknown alias / no K562 head — not a successful own-head
+            result = dumps(
+                ok(
+                    {
+                        "predictions": preds,
+                        "cohort": out.get("cohort"),
+                        "n_windows": out.get("n_windows"),
+                        "path": path,
+                        "prob": None,
+                        "stop_hint": (
+                            "No usable prob (unknown RBP or no cohort head). "
+                            "Do NOT treat as own-head success. "
+                            "If resolve_rbp.in_panel=false: transfer with donors that "
+                            "have heads, or emit verdict p_hat=null, confidence=low."
+                        ),
+                        "_delivery_script": out.get("_script"),
+                    },
+                    ms,
+                )
+            )
+            PredictInteractionTool._cache[key] = result
+            return result
         result = dumps(
             ok(
                 {
@@ -186,6 +214,7 @@ class PredictInteractionTool(Tool):
                     "cohort": out.get("cohort"),
                     "n_windows": out.get("n_windows"),
                     "path": path,
+                    "prob": probs[0] if path == "own_head" else max(probs),
                     "stop_hint": (
                         "OWN-HEAD success: map predictions[0].prob → p_hat/label, "
                         "emit JSON verdict now. Do NOT call transfer/similarity/domain."

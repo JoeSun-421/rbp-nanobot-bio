@@ -14,24 +14,52 @@ if str(ROOT) not in sys.path:
 def test_layout_proposal_paths():
     assert (ROOT / "nanobot" / "agent" / "tools" / "rbp" / "predict.py").is_file()
     assert (ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md").is_file()
-    assert (ROOT / "backends" / "delivery" / "client.py").is_file()
     assert (ROOT / "rbp_eval" / "runner.py").is_file()
-    assert (ROOT / "integrate.py").is_file()
-    assert (ROOT / "cli.py").is_file()
-    # Removed shims / non-proposal product dirs / fixed pipeline
+    assert (ROOT / "rbp_eval" / "evaluator.py").is_file()
+    assert (ROOT / "rbp_eval" / "fuse_hits.py").is_file()
+    assert (ROOT / "rbp_eval" / "proxy_cache.py").is_file()
+    assert (ROOT / "rbp_eval" / "nanobot_hooks.py").is_file()
+    assert (ROOT / "rbp_agent" / "backends" / "delivery" / "client.py").is_file()
+    assert (ROOT / "rbp_agent" / "cli.py").is_file()
+    assert (ROOT / "rbp_agent" / "integrate.py").is_file()
+    assert not (ROOT / "cli.py").exists()
+    assert not (ROOT / "integrate.py").exists()
+    # Removed shims / obsolete product dirs / fixed pipeline
     assert not (ROOT / "rbp_tools").exists()
     assert not (ROOT / "demos").exists()
     assert not (ROOT / "out").exists()
     assert not (ROOT / "core" / "pipeline.py").exists()
-    assert not (ROOT / "core" / "llm_touchpoints.py").exists()
+    assert not (ROOT / "rbp_agent" / "core" / "pipeline.py").exists()
+    assert not (ROOT / "rbp_agent" / "eval").exists()
     # Product core surface
-    assert (ROOT / "core" / "verdict_schema.py").is_file()
-    assert (ROOT / "core" / "onboard.py").is_file()
-    assert (ROOT / "core" / "chat_ux.py").is_file()
+    assert (ROOT / "rbp_agent" / "core" / "verdict_schema.py").is_file()
+    assert (ROOT / "rbp_agent" / "core" / "onboard.py").is_file()
+    assert (ROOT / "rbp_agent" / "core" / "chat_ux.py").is_file()
+
+
+def test_rbp_eval_modules_importable():
+    """Eval package modules should be real modules (not dead shims)."""
+    from rbp_eval.fuse_hits import fuse_rbp_hits
+    from rbp_eval.fuse_hits import fuse_proxy_candidates
+    from rbp_eval.nanobot_hooks import RBPTraceHook
+    from rbp_eval.proxy_cache import lookup_proxies, promote_from_traces
+
+    assert callable(fuse_rbp_hits)
+    assert callable(fuse_proxy_candidates)
+    assert callable(lookup_proxies)
+    assert callable(promote_from_traces)
+    assert hasattr(RBPTraceHook, "emit_query_end")
+
+
+def test_skill_sot_matches_workspace_copy():
+    sot = (ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md").read_text(encoding="utf-8")
+    ws = ROOT / "workspace" / "skills" / "rbp-agent" / "SKILL.md"
+    assert ws.is_file(), "workspace skill copy missing — run python -m rbp_agent.sync_overlay"
+    assert sot == ws.read_text(encoding="utf-8")
 
 
 def test_verdict_schema():
-    from core.verdict_schema import normalize_verdict, validate_verdict
+    from rbp_agent.core.verdict_schema import normalize_verdict, validate_verdict
 
     v = normalize_verdict(
         {
@@ -47,8 +75,8 @@ def test_verdict_schema():
 
 
 def test_fuse_and_label():
-    from core.verdict_schema import label_from_p_hat
-    from rbp_eval.fusion import fuse_proxy_candidates
+    from rbp_agent.core.verdict_schema import label_from_p_hat
+    from rbp_eval.fuse_hits import fuse_proxy_candidates
     from rbp_eval.fuse_hits import fuse_rbp_hits
 
     fused = fuse_proxy_candidates(
@@ -69,7 +97,7 @@ def test_fuse_and_label():
 
 
 def test_agent_default_no_fallback():
-    from integrate import RBPAgent
+    from rbp_agent.integrate import RBPAgent
 
     # Instantiation may fail without delivery; only check default flag via signature
     import inspect
@@ -79,8 +107,8 @@ def test_agent_default_no_fallback():
 
 
 def test_delivery_resolve():
-    from backends.delivery.client import DeliveryToolClient
-    from backends.delivery.env import apply_delivery_env
+    from rbp_agent.backends.delivery.client import DeliveryToolClient
+    from rbp_agent.backends.delivery.env import apply_delivery_env
 
     apply_delivery_env()
     cli = DeliveryToolClient(offline=True, device="cpu", use_conda=False)

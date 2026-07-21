@@ -1,7 +1,7 @@
 [project]
 name = "nanobot-bio"
-version = "0.2.0"
-description = "RNA–RBP agent: nanobot + rhobind_agent_delivery tools"
+version = "0.3.0"
+description = "RBP Agent App: rbp-agent CLI + nanobot plugin SoT + delivery bridge"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -18,22 +18,52 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
+  "ruff>=0.6",
+]
 
 [project.scripts]
-rbp-agent = "cli:main"
+rbp-agent = "rbp_agent.cli:main"
 
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-py-modules = ["cli", "integrate"]
-
+# App packages. Plugin SoT lives at repo-root nanobot/ (synced into $NANOBOT_SRC).
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["backends*", "core*", "rbp_eval*", "scripts*"]
+include = ["rbp_agent*", "rbp_eval*"]
+
+[tool.setuptools.package-data]
+rbp_agent = ["backends/delivery/*.yaml", "backends/delivery/*.yml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = [
+  "--cov=rbp_agent",
+  "--cov=rbp_eval",
+  "--cov-report=term-missing",
+  "--cov-fail-under=30",
+]
+
+[tool.coverage.run]
+omit = [
+  "*/tests/*",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [
+  ".venv",
+  "artifacts",
+  "workspace",
+]
+
+[tool.ruff.lint]
+# Keep green on existing code; expand gradually.
+select = ["E9", "F63", "F7", "F82"]
+ignore = []

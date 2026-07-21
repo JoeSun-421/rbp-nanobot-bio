@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - name: Checkout App
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install App (lock + editable dev)
+        run: |
+          python -m pip install -U pip setuptools wheel
+          pip install -r requirements.lock
+          pip install -e ".[dev]"
+
+      - name: Secret scan
+        run: bash scripts/check_secrets.sh
+
+      - name: Ruff
+        run: ruff check rbp_agent rbp_eval tests
+
+      - name: Pytest
+        run: pytest -q
+
+      - name: Checkout Nanobot runtime (for layout)
+        uses: actions/checkout@v4
+        with:
+          repository: HKUDS/nanobot
+          path: _runtime_nanobot
+          fetch-depth: 1
+
+      - name: Layout (SoT + Runtime import)
+        env:
+          BIO_ROOT: ${{ github.workspace }}/_bio_root
+          NANOBOT_SRC: ${{ github.workspace }}/_runtime_nanobot
+          NANOBOT_BIO_ROOT: ${{ github.workspace }}
+        run: |
+          mkdir -p "$BIO_ROOT"
+          ln -sfn "$NANOBOT_SRC" "$BIO_ROOT/nanobot"
+          ln -sfn "$GITHUB_WORKSPACE" "$BIO_ROOT/nanobot-bio"
+          export PYTHONPATH="$BIO_ROOT:$GITHUB_WORKSPACE${PYTHONPATH:+:$PYTHONPATH}"
+          pip install -e "$NANOBOT_SRC" || true
+          export PYTHONPATH="$NANOBOT_SRC:$PYTHONPATH"
+          rbp-agent layout
+
+      - name: Note — own-head / light eval skipped on public CI
+        run: |
+          echo "own-head and light LOO/eval-plan require delivery + GPU/RAM."
+          echo "Run locally: bash scripts/ci_gate.sh"
+          echo "Or: rbp-agent gate"

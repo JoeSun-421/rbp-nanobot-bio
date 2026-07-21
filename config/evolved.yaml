@@ -1,7 +1,7 @@
 schema_version: 2.0+evolved
 backend: delivery
 cohort: K562
-device: cpu
+device: cuda
 top_k: 5
 n_cand: 5
 encoder: esmc
@@ -24,7 +24,7 @@ fusion_weights:
   esmc_cosine: 1.0
   esm2_cosine: 0.5
   domain_jaccard: 0.6
-  domain_overlap: 0.6
+  domain_overlap: 0.3
   seq_identity: 0.3
   tm_score: 0.3
   lddt: 0.3

@@ -1,6 +1,12 @@
 artifacts/
-rbp_eval/traces/*
-!rbp_eval/traces/.gitkeep
+artifacts/traces/
+artifacts/sessions/
+artifacts/reports/
+artifacts/cache/
+artifacts/logs/
+artifacts/diag/
+# Compat symlink
+workspace/sessions
 .venv/
 **/.venv/
 __pycache__/
@@ -11,8 +17,10 @@ __pycache__/
 !.env.example
 .setup_complete
 .pytest_cache/
-workspace/sessions/*
-!workspace/sessions/.gitkeep
+.coverage
+.coverage.*
+htmlcov/
+.ruff_cache/
 workspace/memory/*
 workspace/sessions/last_thinking.txt
 *.egg-info/
@@ -24,14 +32,14 @@ build/
 *.log
 *.pem
 *.key
-rbp_eval/cache/
 workspace/.nanobot/
 # Never commit live LLM configs
 **/nanobot.config.local.json
 config/*.local.json
+config/evolved.candidate.yaml
 
-# §6.2: nanobot/ is overlay SoT only — never vendor the full framework here.
-# Runtime lives at sibling $BIO_ROOT/nanobot (outside this repo).
+# Overlay SoT only — do not vendor the full nanobot framework in this repo.
+# Runtime lives at sibling $BIO_ROOT/nanobot (outside this package).
 nanobot/__init__.py
 nanobot/__main__.py
 nanobot/nanobot.py
@@ -67,3 +75,8 @@ nanobot/agent/tools/*
 !nanobot/agent/tools/rbp/
 nanobot/skills/*
 !nanobot/skills/rbp-agent/
+.af3_status
+# Local design-proposal binaries (do not require in-repo; do not auto-restore)
+RNA_RBP_Agent_Proposal.docx
+rna_rbp_agent_proposal.pdf
+rna_rbp_agent_proposal_*.pdf

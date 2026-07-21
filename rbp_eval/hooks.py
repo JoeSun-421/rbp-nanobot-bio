@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Trace hooks for self-evolution (proposal §7).
+"""Trace hooks for self-evolution.
 
 - ``JsonlTraceHook``: works without nanobot (fallback / CI).
 - ``rbp_eval.nanobot_hooks.RBPTraceHook``: real AgentHook when nanobot installed.
@@ -23,11 +23,22 @@ class JsonlTraceHook:
         self._buffer: list[dict[str, Any]] = []
 
     def push_event(self, event: dict[str, Any]) -> None:
-        row = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "session_key": self.session_key,
-            **event,
+        type_ = str(event.get("type") or "query_end")
+        extra = {
+            k: v
+            for k, v in event.items()
+            if k not in ("type", "ts", "session_key", "schema")
         }
+        try:
+            from rbp_eval.trace_schema import make_event
+
+            row = make_event(type_, session_key=self.session_key, **extra)
+        except Exception:
+            row = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "session_key": self.session_key,
+                **event,
+            }
         self._buffer.append(row)
         with open(self.out_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")

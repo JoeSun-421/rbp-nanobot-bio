@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Proposal §6.2 / §7 — evaluation, traces, self-evolution."""
+"""Evaluation package: traces, metrics, and self-evolution (``rbp_eval/``)."""
 
 __all__ = [
     "EvolutionReport",

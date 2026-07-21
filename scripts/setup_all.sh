@@ -1,37 +1,34 @@
 #!/usr/bin/env bash
 # =============================================================================
-# nanobot-bio 环境配置 — 仅面向 Linux / SSH 服务器
+# nanobot-bio — sole environment setup entry (Linux / SSH)
 # =============================================================================
-# 提案框架: nanobot（必须可 import）
-# 工具后端: rhobind_agent_delivery（AGENT_BUILD_SPEC）
+# First-time (science conda + agent + optional AF3 hardening):
+#   bash scripts/setup_all.sh
 #
-# 推荐总入口（仓库根）::
-#   bash ../scripts/setup_linux_server.sh [--with-conda]
+# Day-to-day (standard venv; CLI loads .env automatically):
+#   source $BIO_ROOT/nanobot-bio/.venv/bin/activate
+#   rbp-agent doctor && rbp-agent chat
 #
-# 或本脚本::
-#   cd /path/to/bio_agent/nanobot-bio
-#   export NANOBOT_SRC=/path/to/nanobot   # optional; default $BIO_ROOT/nanobot
-#   export NANOBOT_GIT=https://github.com/HKUDS/nanobot.git
-#   bash scripts/setup_all.sh                 # 默认：完整高级环境（含 delivery conda）
-#   bash scripts/setup_all.sh --skip-conda    # 仅 agent venv（无 GPU 科学栈）
-#   bash scripts/setup_all.sh --skip-smoke
+# Options:
+#   --skip-conda     agent venv only (no RhoBind/ESM/AF3)
+#   --skip-smoke     skip doctor smoke check
+#   --skip-af3       skip AF3 hardening (default on; 10-minute budget)
+#   AF3_BUDGET_SEC=600  AF3 hardening timeout (then deferred)
 #
-# 默认一次性配置全部高级依赖（protein_embed / rna / rhobind / af3 + agent venv）。
-# 日常 SSH 用 light activate；不要把 setup 拆进每次 source。
-# 若旁路 nanobot 不存在，自动 git clone HKUDS/nanobot（可用 NANOBOT_NO_CLONE=1 禁用）。
-# nanobot 要求 Python >= 3.13。不够则尝试 conda env rbp_nanobot。
+# Does not modify rhobind_agent_delivery sources; read-only use of setup_envs / tools.
 # =============================================================================
 set -euo pipefail
 
-# Product default: full science stack once. Opt out with --skip-conda.
 WITH_CONDA=1
 SKIP_SMOKE=0
+SKIP_AF3=0
 for arg in "$@"; do
   case "$arg" in
-    --with-conda) WITH_CONDA=1 ;;  # kept for back-compat (now default)
+    --with-conda) WITH_CONDA=1 ;;
     --skip-conda) WITH_CONDA=0 ;;
     --skip-smoke) SKIP_SMOKE=1 ;;
-    -h|--help) sed -n '1,40p' "$0"; exit 0 ;;
+    --skip-af3) SKIP_AF3=1 ;;
+    -h|--help) sed -n '1,25p' "$0"; exit 0 ;;
   esac
 done
 
@@ -40,13 +37,270 @@ AGENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIO_ROOT="$(cd "${BIO_ROOT:-$AGENT_ROOT/..}" && pwd)"
 DELIVERY_ROOT="${DELIVERY_ROOT:-$BIO_ROOT/rhobind_agent_delivery}"
 NANOBOT_SRC="${NANOBOT_SRC:-$BIO_ROOT/nanobot}"
-export BIO_ROOT NANOBOT_SRC
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/ensure_nanobot_runtime.sh"
+export BIO_ROOT NANOBOT_SRC DELIVERY_ROOT
+export NANOBOT_BIO_ROOT="$AGENT_ROOT"
+export NANOBOT_WORKSPACE="$AGENT_ROOT/workspace"
+
+# ---------------------------------------------------------------------------
+# Inline: ensure sibling nanobot runtime (clone HKUDS/nanobot if missing)
+# ---------------------------------------------------------------------------
+_ensure_nanobot() {
+  local NANOBOT_GIT_DEFAULT="https://github.com/HKUDS/nanobot.git"
+  local NANOBOT_GIT="${NANOBOT_GIT:-$NANOBOT_GIT_DEFAULT}"
+  local NANOBOT_CLONE_TIMEOUT="${NANOBOT_CLONE_TIMEOUT:-180}"
+  NANOBOT_SRC="${NANOBOT_SRC:-$BIO_ROOT/nanobot}"
+
+  case "$NANOBOT_SRC" in
+    *"nanobot-bio/nanobot"|*"nanobot-bio/nanobot/")
+      if [[ ! -f "$NANOBOT_SRC/nanobot.py" && ! -f "$NANOBOT_SRC/pyproject.toml" ]]; then
+        NANOBOT_SRC="$BIO_ROOT/nanobot"
+      fi
+      ;;
+  esac
+
+  _nanobot_ok() {
+    local d="$1"
+    [[ -f "$d/__init__.py" || -f "$d/nanobot.py" || -f "$d/pyproject.toml" ]]
+  }
+
+  if _nanobot_ok "$NANOBOT_SRC"; then
+    echo "[ensure_nanobot] OK: $NANOBOT_SRC"
+    export NANOBOT_SRC
+    return 0
+  fi
+
+  if [[ "${NANOBOT_NO_CLONE:-0}" == "1" ]]; then
+    echo "ERROR: nanobot runtime missing at $NANOBOT_SRC (NANOBOT_NO_CLONE=1)" >&2
+    return 1
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    echo "ERROR: git required to clone nanobot into $NANOBOT_SRC" >&2
+    return 1
+  fi
+
+  if [[ -e "$NANOBOT_SRC" ]]; then
+    if [[ -d "$NANOBOT_SRC" ]] && [[ -z "$(ls -A "$NANOBOT_SRC" 2>/dev/null || true)" ]]; then
+      rmdir "$NANOBOT_SRC" 2>/dev/null || true
+    elif [[ -d "$NANOBOT_SRC" ]] && ! _nanobot_ok "$NANOBOT_SRC"; then
+      if [[ -d "$NANOBOT_SRC/skills/rbp-agent" || -d "$NANOBOT_SRC/agent/tools/rbp" ]]; then
+        echo "ERROR: $NANOBOT_SRC looks like a plugin overlay, not the nanobot runtime." >&2
+        echo "  Set NANOBOT_SRC=\$BIO_ROOT/nanobot (sibling) and re-run." >&2
+        return 1
+      fi
+      echo "WARN: incomplete nanobot at $NANOBOT_SRC — moving aside" >&2
+      mv "$NANOBOT_SRC" "${NANOBOT_SRC}.bak.$(date +%s)"
+    fi
+  fi
+
+  local _urls=()
+  _urls+=("$NANOBOT_GIT")
+  if [[ "$NANOBOT_GIT" == "$NANOBOT_GIT_DEFAULT" ]]; then
+    _urls+=(
+      "https://ghproxy.net/https://github.com/HKUDS/nanobot.git"
+      "https://mirror.ghproxy.com/https://github.com/HKUDS/nanobot.git"
+      "https://gitclone.com/github.com/HKUDS/nanobot.git"
+    )
+  fi
+
+  mkdir -p "$(dirname "$NANOBOT_SRC")"
+  local _cloned=0 _url _ok
+  export GIT_TERMINAL_PROMPT=0
+  for _url in "${_urls[@]}"; do
+    echo "[ensure_nanobot] cloning (${NANOBOT_CLONE_TIMEOUT}s) $_url → $NANOBOT_SRC"
+    rm -rf "$NANOBOT_SRC"
+    _ok=0
+    if command -v timeout >/dev/null 2>&1; then
+      if timeout -k 8 "$NANOBOT_CLONE_TIMEOUT" \
+        git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 \
+        clone --depth 1 "$_url" "$NANOBOT_SRC"
+      then
+        _ok=1
+      fi
+    else
+      if git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 \
+        clone --depth 1 "$_url" "$NANOBOT_SRC"
+      then
+        _ok=1
+      fi
+    fi
+    if [[ "$_ok" == "1" ]] && _nanobot_ok "$NANOBOT_SRC"; then
+      _cloned=1
+      break
+    fi
+    echo "[ensure_nanobot] WARN: clone failed/timeout for $_url" >&2
+    rm -rf "$NANOBOT_SRC"
+  done
+
+  if [[ "$_cloned" != "1" ]] || ! _nanobot_ok "$NANOBOT_SRC"; then
+    echo "ERROR: could not clone nanobot runtime into $NANOBOT_SRC" >&2
+    echo "  Manual: git clone --depth 1 https://github.com/HKUDS/nanobot.git $NANOBOT_SRC" >&2
+    return 1
+  fi
+  echo "[ensure_nanobot] cloned OK: $NANOBOT_SRC"
+  export NANOBOT_SRC
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Inline: AF3 harden (writes nanobot-bio/.af3_status only; delivery read-only)
+# ---------------------------------------------------------------------------
+_setup_af3() {
+  local AF3_DIR="${AF3_DIR:-$DELIVERY_ROOT/agent/third_party/alphafold3}"
+  local YML="$AF3_DIR/af3_env.yml"
+  local PIP_INDEX="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+  local PIP_HOST="${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}"
+  local AF3_BUDGET_SEC="${AF3_BUDGET_SEC:-600}"
+  local STATUS_FILE="${AF3_STATUS_FILE:-$AGENT_ROOT/.af3_status}"
+  local _START
+  _START=$(date +%s)
+
+  _budget_left() {
+    local now elapsed
+    now=$(date +%s)
+    elapsed=$((now - _START))
+    echo $((AF3_BUDGET_SEC - elapsed))
+  }
+  _stop_if_over() {
+    local left
+    left="$(_budget_left)"
+    if (( left <= 0 )); then
+      echo "[af3] BUDGET ${AF3_BUDGET_SEC}s exceeded — stop; resume tomorrow." >&2
+      _write_status deferred "budget_exceeded"
+      return 1
+    fi
+    return 0
+  }
+  _write_status() {
+    local state="$1" note="${2:-}"
+    {
+      echo "state=$state"
+      echo "ts=$(date -Iseconds 2>/dev/null || date)"
+      echo "note=$note"
+      echo "af3_python=${AF3_PYTHON:-}"
+      echo "budget_sec=$AF3_BUDGET_SEC"
+    } > "$STATUS_FILE"
+    echo "[af3] wrote $STATUS_FILE ($state)"
+  }
+
+  echo "[af3] budget=${AF3_BUDGET_SEC}s  DELIVERY_ROOT=$DELIVERY_ROOT (read-only)"
+  if [[ ! -f "$YML" ]]; then
+    echo "ERROR: missing $YML" >&2
+    _write_status missing "no_af3_env_yml"
+    return 1
+  fi
+  command -v conda >/dev/null || { echo "ERROR: conda required" >&2; return 1; }
+
+  _stop_if_over || return 0
+  if ! conda env list 2>/dev/null | awk '{print $1}' | grep -qx af3; then
+    echo "[af3] creating env via delivery setup_af3.sh ..."
+    # shellcheck disable=SC1091
+    source "$DELIVERY_ROOT/agent/setup.sh"
+    timeout "$(_budget_left)" bash "$DELIVERY_ROOT/agent/setup_af3.sh" \
+      || { _write_status deferred "setup_af3_timeout_or_fail"; return 0; }
+  fi
+
+  local AF3_PY
+  AF3_PY="$(conda run -n af3 which python 2>/dev/null || true)"
+  if [[ -z "$AF3_PY" || ! -x "$AF3_PY" ]]; then
+    _write_status missing "no_af3_python"
+    return 1
+  fi
+  export AF3_PYTHON="$AF3_PY"
+  echo "[af3] AF3_PYTHON=$AF3_PYTHON"
+
+  _stop_if_over || return 0
+  echo "[af3] ensure jax/triton pins from af3_env.yml ..."
+  local PINS=()
+  mapfile -t PINS < <(python - <<PY
+from pathlib import Path
+pins, in_pip = [], False
+for line in Path(r"$YML").read_text().splitlines():
+    s = line.strip()
+    if s.startswith("- pip:"):
+        in_pip = True
+        continue
+    if in_pip:
+        if s.startswith("- ") and "==" in s:
+            pins.append(s[2:].strip())
+        elif s and not s.startswith("-") and not s.startswith("#"):
+            break
+want = [p for p in pins if p.split("==")[0] in (
+    "jax", "jaxlib", "triton", "jax-cuda12-pjrt", "jax-cuda12-plugin",
+)]
+for p in want:
+    print(p)
+PY
+)
+  if ((${#PINS[@]})); then
+    timeout "$(_budget_left)" "$AF3_PY" -m pip install --no-deps \
+      -i "$PIP_INDEX" --trusted-host "$PIP_HOST" "${PINS[@]}" -q \
+      || true
+  fi
+
+  _stop_if_over || return 0
+  echo "[af3] bump nvidia-cuda-nvcc-cu12 (≥12.8) for new GPUs ..."
+  timeout "$(_budget_left)" "$AF3_PY" -m pip install -U 'nvidia-cuda-nvcc-cu12>=12.8' \
+    -i "$PIP_INDEX" --trusted-host "$PIP_HOST" -q \
+    || echo "[af3] WARN: nvcc bump skipped"
+
+  _stop_if_over || return 0
+  echo "[af3] import verify ..."
+  if ! "$AF3_PY" - <<'PY'
+import jax, triton
+import alphafold3  # noqa: F401
+print("jax", jax.__version__, "triton", triton.__version__, "devices", jax.devices())
+assert jax.__version__.startswith("0.4."), jax.__version__
+print("import OK")
+PY
+  then
+    _write_status broken "import_failed"
+    return 0
+  fi
+
+  _stop_if_over || return 0
+  if [[ "${AF3_SKIP_SMOKE:-0}" == "1" ]]; then
+    _write_status import_ok "smoke_skipped"
+  else
+    echo "[af3] short inference smoke (remaining $(_budget_left)s) ..."
+    export AF3_DIR AF3_PARAMS="${AF3_PARAMS:-$DELIVERY_ROOT/af3_assets/alphafold_param}"
+    export AF3_CACHE="${AF3_CACHE:-/tmp/af3_cache}"
+    mkdir -p "$AF3_CACHE"
+    set +e
+    timeout "$(_budget_left)" "$AF3_PY" \
+      "$DELIVERY_ROOT/agent/tools/structure/structure_predict_af3.py" --json \
+      '{"sequence":"MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG","name":"ubq"}' \
+      > /tmp/af3_budget_smoke.out 2> /tmp/af3_budget_smoke.err
+    local ec=$?
+    set -e
+    if grep -q '"ok": true' /tmp/af3_budget_smoke.out 2>/dev/null; then
+      _write_status ok "smoke_passed"
+    else
+      local note="smoke_failed_ec=${ec}; Blackwell/Triton often needs newer jax — defer"
+      echo "[af3] inference smoke failed (imports OK). $note"
+      echo "[af3] Agent can still use AFDB via structure_fetch / struct_similarity."
+      _write_status deferred "$note"
+    fi
+  fi
+
+  local ENVF="$AGENT_ROOT/.env"
+  if [[ -f "$ENVF" ]]; then
+    if grep -q '^AF3_PYTHON=' "$ENVF"; then
+      sed -i "s|^AF3_PYTHON=.*|AF3_PYTHON=$AF3_PYTHON|" "$ENVF"
+    else
+      echo "AF3_PYTHON=$AF3_PYTHON" >> "$ENVF"
+    fi
+  fi
+  echo "[af3] done (elapsed $(( $(date +%s) - _START ))s)"
+  return 0
+}
+
+# =============================================================================
+_ensure_nanobot
 NANOBOT_SRC="${NANOBOT_SRC}"
+export NANOBOT_SRC
 
 echo "=============================================="
-echo " nanobot-bio setup (Linux / proposal nanobot)"
+echo " nanobot-bio setup (Linux / plugin overlay)"
 echo "=============================================="
 echo "  BIO_ROOT      = $BIO_ROOT"
 echo "  AGENT_ROOT    = $AGENT_ROOT"
@@ -82,10 +336,6 @@ export AF3_DIR="${AF3_DIR:-$_bundle/agent/third_party/alphafold3}"
 export AF3_PARAMS="${AF3_PARAMS:-$_bundle/af3_assets/alphafold_param}"
 export AF3_CACHE="${AF3_CACHE:-/tmp/af3_cache}"
 export AF3_PYTHON="${AF3_PYTHON:-/bin/false}"
-export DELIVERY_ROOT AGENT_ROOT BIO_ROOT
-export NANOBOT_BIO_ROOT="$AGENT_ROOT"
-export NANOBOT_WORKSPACE="$AGENT_ROOT/workspace"
-export NANOBOT_SRC
 echo "  AGENT_DB=$AGENT_DB"
 echo "  RHOBIND_RELEASE=$RHOBIND_RELEASE"
 
@@ -93,7 +343,6 @@ if [[ "$WITH_CONDA" == "1" ]]; then
   echo "[2/6] delivery setup_envs.sh (protein_embed=ESM / rna / rhobind / af3) ..."
   if command -v conda >/dev/null 2>&1; then
     bash "$DELIVERY_ROOT/agent/setup_envs.sh"
-    # Require all science envs — fail setup if any missing
     _missing=0
     for _env in protein_embed rna rhobind af3; do
       if conda env list 2>/dev/null | awk '{print $1}' | grep -qx "$_env"; then
@@ -107,7 +356,6 @@ if [[ "$WITH_CONDA" == "1" ]]; then
       echo "ERROR: full science stack incomplete. Re-run setup_envs or fix conda." >&2
       exit 1
     fi
-    # Harden existing rhobind env: ensure transformers (common failure mode)
     if ! conda run -n rhobind python -c "import transformers" >/dev/null 2>&1; then
       echo "  rhobind missing transformers — installing release requirements ..."
       conda run -n rhobind pip install -r "$RHOBIND_RELEASE/requirements.txt"
@@ -128,6 +376,16 @@ if [[ "$WITH_CONDA" == "1" ]]; then
         echo "ERROR: af3 env has no usable python" >&2
         exit 1
       fi
+    fi
+    if [[ "$SKIP_AF3" != "1" ]]; then
+      echo "[2b/6] AF3 harden (budget ${AF3_BUDGET_SEC:-600}s; deferred ≠ setup fail) ..."
+      AF3_BUDGET_SEC="${AF3_BUDGET_SEC:-600}" _setup_af3 \
+        || echo "  WARN: AF3 harden exited non-zero (science stack still usable via AFDB)" >&2
+      if [[ -f "$AGENT_ROOT/.af3_status" ]]; then
+        echo "  AF3 status: $(tr '\n' ' ' < "$AGENT_ROOT/.af3_status")"
+      fi
+    else
+      echo "[2b/6] skip AF3 harden (--skip-af3)"
     fi
   else
     echo "ERROR: conda not found — cannot build full science stack." >&2
@@ -178,7 +436,12 @@ fi
 # shellcheck disable=SC1091
 source "$AGENT_ROOT/.venv/bin/activate"
 python -m pip install -U pip setuptools wheel
-python -m pip install -r "$AGENT_ROOT/requirements.txt"
+if [[ ! -f "$AGENT_ROOT/requirements.lock" ]]; then
+  echo "ERROR: missing $AGENT_ROOT/requirements.lock (sole App pip pin file)" >&2
+  exit 1
+fi
+echo "  pip install -r requirements.lock (pinned runtime)"
+python -m pip install -r "$AGENT_ROOT/requirements.lock"
 
 echo "  install nanobot deps + .pth (flat layout; avoid pip -e)"
 mapfile -t _NB_DEPS < <(python - <<PY
@@ -205,14 +468,13 @@ assert '/nanobot-bio/' not in p, p
 assert p.endswith('__init__.py') or '/nanobot/' in p, p
 ")
 
-# 提案 §6.2：把 nanobot/agent/tools/rbp 安装进真实 nanobot 包树
-echo "  install RBP tools into nanobot package tree ..."
+echo "  sync plugin overlay into nanobot runtime ..."
 export NANOBOT_SRC NANOBOT_BIO_ROOT="$AGENT_ROOT" NANOBOT_WORKSPACE="$AGENT_ROOT/workspace"
-python "$AGENT_ROOT/scripts/install_rbp_into_nanobot.py"
+python -m pip install -e "${AGENT_ROOT}[dev]" -q || python -m pip install -e "$AGENT_ROOT" -q
+python -m rbp_agent.sync_overlay
 python -c "from nanobot.agent.tools.rbp.predict import PredictInteractionTool; print('  nanobot.agent.tools.rbp OK', PredictInteractionTool)"
 
-echo "[5/6] .env + workspace skill (activate_env.sh is maintained in-repo; not overwritten) ..."
-# Resolve AF3 python once so light activate never needs conda probe
+echo "[5/6] .env + workspace skill ..."
 _AF3_PY="${AF3_PYTHON:-/bin/false}"
 if [[ ! -x "$_AF3_PY" || "$_AF3_PY" == "/bin/false" ]]; then
   for _c in \
@@ -230,8 +492,6 @@ if [[ ! -x "$_AF3_PY" || "$_AF3_PY" == "/bin/false" ]]; then
   fi
 fi
 export AF3_PYTHON="${_AF3_PY:-/bin/false}"
-
-python -m pip install -e "$AGENT_ROOT" -q
 
 cat > "$AGENT_ROOT/.env" <<EOF
 # Generated by setup_all.sh on Linux server
@@ -258,31 +518,47 @@ RHOBIND_DEVICE=${RHOBIND_DEVICE:-auto}
 RBP_BACKEND=delivery
 EOF
 
-chmod +x "$AGENT_ROOT/scripts/activate_env.sh" "$AGENT_ROOT/scripts/setup_all.sh" 2>/dev/null || true
+chmod +x "$AGENT_ROOT/scripts/setup_all.sh" 2>/dev/null || true
 
 mkdir -p "$AGENT_ROOT/workspace/skills/rbp-agent" \
-  "$AGENT_ROOT/workspace/sessions" \
-  "$AGENT_ROOT/workspace/memory" \
-  "$AGENT_ROOT/rbp_eval/traces"
-[[ -f "$AGENT_ROOT/nanobot/skills/rbp-agent/SKILL.md" ]] && \
-  cp -f "$AGENT_ROOT/nanobot/skills/rbp-agent/SKILL.md" "$AGENT_ROOT/workspace/skills/rbp-agent/SKILL.md"
+  "$AGENT_ROOT/workspace/memory"
+PYTHONPATH="$AGENT_ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 -c "
+from rbp_agent.core.paths import ensure_artifact_dirs, migrate_flat_artifacts
+ensure_artifact_dirs()
+migrate_flat_artifacts()
+print('[setup] artifacts dirs OK')
+" || mkdir -p \
+  "$AGENT_ROOT/artifacts/traces" \
+  "$AGENT_ROOT/artifacts/sessions" \
+  "$AGENT_ROOT/artifacts/reports" \
+  "$AGENT_ROOT/artifacts/cache" \
+  "$AGENT_ROOT/artifacts/logs" \
+  "$AGENT_ROOT/artifacts/diag"
+# Always sync SoT plugin overlay → runtime + workspace
+echo "[sync] plugin overlay → NANOBOT_SRC + workspace ..."
+export PYTHONPATH="$BIO_ROOT:$AGENT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+python -m rbp_agent.sync_overlay || {
+  echo "WARN: sync_overlay failed (NANOBOT_SRC may be incomplete); doctor will retry" >&2
+}
+# Ensure workspace skill marker stays present after sync
+cat > "$AGENT_ROOT/workspace/skills/rbp-agent/DO_NOT_EDIT.md" <<'EOF'
+# Generated by sync — do not hand-edit
+
+Edit the SoT (source-of-truth) instead:
+
+  nanobot/skills/rbp-agent/SKILL.md
+
+Then run: `python -m rbp_agent.sync_overlay` or `rbp-agent doctor`.
+EOF
 
 if [[ "$SKIP_SMOKE" != "1" ]]; then
-  echo "[6/6] Smoke + full verify ..."
-  export PYTHONPATH="$BIO_ROOT:$AGENT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
-  python "$AGENT_ROOT/cli.py" doctor
-  python "$AGENT_ROOT/cli.py" nanobot-smoke || true
-  # One-shot heavy path in a subshell (pip -e + RBP sync + import verify)
-  # Does not replace setup — only re-syncs overlay after the full install above.
-  (
-    # shellcheck disable=SC1091
-    ACTIVATE_HEAVY=1 ACTIVATE_VERIFY=1 source "$AGENT_ROOT/scripts/activate_env.sh"
-  ) || echo "[setup] WARN: heavy activate verify had warnings"
+  echo "[6/6] Smoke + verify ..."
+  python -m rbp_agent doctor
+  python -m rbp_agent nanobot-smoke || true
 else
   echo "[6/6] skip smoke"
 fi
 
-# Stamp: light activate expects this after a full setup
 _STAMP="$AGENT_ROOT/.setup_complete"
 {
   echo "setup_all_ts=$(date -Iseconds 2>/dev/null || date)"
@@ -295,8 +571,8 @@ echo "  wrote $_STAMP"
 
 echo
 echo " setup_all.sh done — full advanced env configured once."
-echo " Every later SSH session (light, fast):"
-echo "   source $AGENT_ROOT/scripts/activate_env.sh"
+echo " Every later SSH session:"
+echo "   source $AGENT_ROOT/.venv/bin/activate"
 echo "   rbp-agent doctor && rbp-agent chat"
 echo " Re-run full setup after pulls / new GPU host:"
 echo "   bash $AGENT_ROOT/scripts/setup_all.sh"

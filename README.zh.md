@@ -1,189 +1,106 @@
 # nanobot-bio
 
-[![Python](https://img.shields.io/badge/python-≥3.10-blue.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-see%20repo-lightgrey.svg)](#许可与归属)
-[![Release](https://img.shields.io/badge/release-v0.2.0-green.svg)](https://github.com/JoeSun-421/rbp-nanobot-bio/releases)
+[![Python](https://img.shields.io/badge/python-%E2%89%A53.10-blue.svg)](https://www.python.org/)
+[![Release](https://img.shields.io/badge/release-v0.3.0-green.svg)](https://github.com/JoeSun-421/rbp-nanobot-bio/releases)
 
 [English](README.md) | **中文**
 
-面向 **RNA–RBP 相互作用**判定的 LLM 智能体。产品路径是真正的工具调用 agent（`Nanobot.run` + skills + delivery 桥接），不是固定流水线。
-
-> **范围。** 本仓库仅包含 **agent 产品包**。科学工具、checkpoint 与数据库在旁路 delivery 包（`rhobind_agent_delivery/`，运行时只读）中，**不**随本仓库分发。
-
----
-
-## 目录
-
-- [功能](#功能)
-- [架构](#架构)
-- [仓库结构](#仓库结构)
-- [环境要求](#环境要求)
-- [快速开始](#快速开始)
-- [CLI](#cli)
-- [行为约束](#行为约束)
-- [配置](#配置)
-- [版本](#版本)
-- [安全](#安全)
-- [许可与归属](#许可与归属)
-
----
+面向 RNA–RBP 相互作用 *in silico* 评估的应用层。CLI `rbp-agent` 通过 [Nanobot](https://github.com/HKUDS/nanobot) 编排只读科学工具包（`rhobind_agent_delivery`）。结合分数仅来自预测工具；语言模型负责规划工具调用并生成有据解释。
 
 ## 功能
 
-| 能力 | 说明 |
-|------|------|
-| Stage-0 own-head | 目录内 RBP → resolve → predict → 结构化 JSON |
-| Transfer | 未见 RBP → 检索 donor → 预测 → integrate |
-| 多厂商 LLM | OpenAI、Anthropic、DeepSeek、Gemini、通义、智谱、Moonshot 等 |
-| 科学桥接 | Conda 隔离的 delivery 工具（ESM、Foldseek、RhoBind、可选 AF3） |
-| 安全默认 | 禁止编造 `p_hat`；agent 路径禁用 shell / web_search |
-
----
+- **目录内（Stage 0）：** resolve → own-head `predict_interaction` → JSON verdict
+- **迁移路径：** 多视角检索（序列 / 结构 / 功能）→ donor head → integrate
+- **隔离科学后端：** conda 中的 RhoBind、ESM、Foldseek；可选 AF3；agent 侧 RNA 相似度
+- **评测：** light LOO、evaluation-plan 消融、nested-split evolve-eval
+- **安全默认：** 禁用 shell / 通用网络工具；OOM 时 `p_hat=null`，不臆造分数
 
 ## 架构
 
 ```text
-┌─────────────────────┐     ┌──────────────────────┐     ┌─────────────────────────┐
-│  rbp-agent (CLI)    │────▶│  Nanobot 运行时       │────▶│  rhobind_agent_delivery │
-│  onboard / chat /   │     │  （旁路安装）         │     │  （只读科学包）          │
-│  doctor / agent     │     │  + §6.2 RBP 工具      │     │  conda 环境 + 脚本      │
-└─────────────────────┘     └──────────────────────┘     └─────────────────────────┘
+rbp-agent (App)  →  Nanobot 运行时 ($NANOBOT_SRC)  →  delivery ($DELIVERY_ROOT，只读)
+     │                      │
+     ├─ config/             ├─ 自 nanobot/agent/tools/rbp/ 同步的工具
+     ├─ rbp_eval/           └─ 自 nanobot/skills/rbp-agent/ 同步的 skill
+     └─ artifacts/
 ```
 
-| 路径 | 适用 | 流程 |
-|------|------|------|
-| Stage 0 | 目录内 RBP | `resolve_rbp` → `predict_interaction` → JSON → **停止** |
-| Transfer | 未见 / 强制 | 检索 → donor 预测 → integrate → JSON |
-
----
-
-## 仓库结构
-
-本仓库在 `nanobot/` 下只保留提案 **§6.2 覆盖层**（skills + `tools/rbp`），作为同步用的 SoT，不是可 import 的完整框架。完整 nanobot 作为旁路运行时。
-
-```text
-nanobot-bio/                   # 本 git 仓库
-├── nanobot/                   # §6.2 SoT — skills + agent/tools/rbp
-├── backends/delivery/         # 桥接 delivery 脚本（conda 环境）
-├── core/                      # onboard / chat UX / verdict schema
-├── rbp_eval/                  # traces 与评测辅助
-├── scripts/                   # setup_all、activate_env、同步脚本
-├── cli.py                     # rbp-agent 入口
-└── integrate.py               # RBPAgent → Nanobot.from_config().run
-```
-
-期望的旁路布局（不在本仓库内）：
-
-```text
-<workspace>/
-├── nanobot/                   ← 运行时；import nanobot → 这里
-├── nanobot-bio/               ← 本包
-└── rhobind_agent_delivery/    ← 科学包（设置 DELIVERY_ROOT）
-```
-
-结构检查：
-
-```bash
-python scripts/check_proposal_62_layout.py
-```
-
----
+| 层 | 职责 |
+|----|------|
+| App | CLI、桥接、配置、验收、SoT 同步 |
+| Runtime | Agent 循环、工具注册、会话 |
+| Science | 无状态预测器与数据库（本仓不修改） |
 
 ## 环境要求
 
-- Python ≥ 3.10（agent venv）
-- Delivery 提供的 conda 环境：`protein_embed`、`rna`、`rhobind`（AF3 可选）
-- **推荐：** CUDA GPU + 足够内存（RhoBind / ESM）
-- 通过 `rbp-agent onboard` 配置 LLM（写入本机 `~/.nanobot/config.json`——**勿提交**）
-- ESM 等 Hugging Face 权重（本地缓存；可用 `HF_ENDPOINT` 镜像）
+- Python ≥ 3.10
+- 同级 Nanobot 运行时与 `rhobind_agent_delivery`（通常位于同一 `BIO_ROOT`）
+- 可选：GPU 与 delivery 提供的 conda 环境（RhoBind / ESM / AF3）
 
----
+## 安装
+
+```bash
+cd nanobot-bio
+bash scripts/setup_all.sh
+source .venv/bin/activate
+```
+
+配置 LLM（OpenAI 兼容）：
+
+```bash
+rbp-agent onboard
+```
 
 ## 快速开始
 
 ```bash
-export BIO_ROOT=/path/to/workspace
-export DELIVERY_ROOT=$BIO_ROOT/rhobind_agent_delivery
-
-# 首次一次：agent venv + 科学 conda
-bash $BIO_ROOT/nanobot-bio/scripts/setup_all.sh
-# 仅 agent（跳过科学 conda）：加 --skip-conda
-
-# 日常：轻量激活
-source $BIO_ROOT/nanobot-bio/scripts/activate_env.sh
-
-rbp-agent onboard
 rbp-agent doctor
+rbp-agent mvp
+rbp-agent agent --message "Does this RNA interact with RBP PTBP1? RNA: <seq>"
 rbp-agent chat
-rbp-agent agent --example pos --strict
 ```
 
-可用 `NANOBOT_GIT`、`NANOBOT_SRC` 覆盖 nanobot 路径。  
-拉取代码后重同步覆盖层：`ACTIVATE_HEAVY=1 source …/activate_env.sh`。
-
----
-
-## CLI
+## 命令
 
 | 命令 | 用途 |
 |------|------|
-| `rbp-agent onboard` | 配置 LLM 厂商 / 模型 / API key |
-| `rbp-agent doctor` | 检查 delivery 与 conda |
-| `rbp-agent chat` | 交互式会话 |
-| `rbp-agent agent` | 单次运行 |
-| `rbp-agent own-head` | Own-head 冒烟（无需 LLM） |
-| `rbp-agent predict` | 直接调用 predict API |
-
----
-
-## 行为约束
-
-- 产品路径仅为 **`Nanobot.run`**
-- **禁止编造 `p_hat`**；预测 OOM/超时 → `p_hat=null`，勿重试
-- Stage 0 在成功 own-head 后必须停止
-- delivery 只读，仅通过桥接调用
-- 禁用 shell / `web_search` / `web_fetch`；文献用 `literature_search`
-
----
+| `doctor` | 路径、registry、skill 同步、模型能力矩阵 |
+| `onboard` | LLM 厂商 / API key / 模型 |
+| `mvp` / `own-head` | 验收路径 |
+| `agent` / `chat` | 产品 Nanobot 运行 |
+| `eval-plan` / `evolve` / `evolve-eval` | 离线评测与策略候选 |
+| `layout` / `gate` / `compliance` | 工程检查 |
 
 ## 配置
 
-| 变量 | 作用 |
+默认值见 [`config/defaults.yaml`](config/defaults.yaml)（阈值、融合权重、`models:` 元数据）。仅当 `evolved: true` 且门禁通过时使用 `config/evolved.yaml`。
+
+## 评测
+
+- Light LOO 使用 delivery 的 transfer CSV，不在全量 FASTA 上重算 RhoBind。
+- 晋升 evolved 配置需工程门禁 **且** nested-split 证据（`delta_auprc > 0`）；否则保留 candidate。
+
+## 限制
+
+- 部分 GPU 上 AF3 可能不可用；默认 AFDB → Foldseek。
+- 默认 RNA 相似度为 mock；未配置真实 checkpoint 前 `rna_*` 融合权重为 0。
+- 标签阈值校准需要外部 `{p_hat, y}`。
+
+## 文档
+
+| 文档 | 内容 |
 |------|------|
-| `BIO_ROOT` | 工作区根目录 |
-| `DELIVERY_ROOT` | delivery 路径 |
-| `NANOBOT_SRC` | 旁路 nanobot 运行时 |
-| `NANOBOT_WORKSPACE` | agent workspace |
-| `NANOBOT_CONFIG` | LLM 配置（默认 `~/.nanobot/config.json`） |
-| `RHOBIND_DEVICE` | `auto` / `cuda` / `cpu` |
-| `CONDA_ENVS_PATH` | 非标准 conda envs 目录时设置 |
-| `HF_HOME` / `HF_ENDPOINT` | HF 缓存与可选镜像 |
+| [docs/工程指南.zh.md](docs/工程指南.zh.md) | 契约、E2E、AF3、改动门禁（§9） |
+| [CHANGELOG.md](CHANGELOG.md) | 版本记录 |
 
-复制 [`.env.example`](.env.example) → `.env`（已被 gitignore）。
+## 引用
 
----
-
-## 版本
-
-| 版本 | 说明 |
-|------|------|
-| [v0.1.0](https://github.com/JoeSun-421/rbp-nanobot-bio/releases/tag/v0.1.0) | 首次推送到 GitHub 的 agent 包 |
-| [v0.2.0](https://github.com/JoeSun-421/rbp-nanobot-bio/releases/tag/v0.2.0) | §6.2 外部化、delivery 客户端加固、chat UX、工具修复 |
-
-详见 [CHANGELOG.md](CHANGELOG.md)。
-
----
+请同时引用 delivery 科学方法（RhoBind LOO / DESIGN）、Nanobot 运行时，以及本应用版本（如 v0.3.0）。
 
 ## 安全
 
-- **不要提交** API key、`.env` 或 `~/.nanobot/config.json`
-- 曾粘贴到聊天/终端的密钥请轮换
-- 本仓库刻意不包含 delivery 科学包与大模型权重
+勿提交 API key、`.env` 或 `~/.nanobot/config.json`；日志中出现过的密钥应轮换。
 
----
+## 许可
 
-## 许可与归属
-
-Agent 打包与桥接代码属于本项目。delivery 中的 AlphaFold3 权重 / RhoBind checkpoint 遵循上游许可，不得在未授权范围内再分发。
-
-Nanobot 运行时：[HKUDS/nanobot](https://github.com/HKUDS/nanobot)。
+应用打包与桥接代码属本项目。Delivery 权重与 checkpoint 遵循上游许可。运行时：[HKUDS/nanobot](https://github.com/HKUDS/nanobot)。

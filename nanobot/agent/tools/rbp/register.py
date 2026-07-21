@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Register proposal RBP tools + optional raw delivery tools onto a ToolRegistry."""
+"""Register curated RBP tools + optional raw delivery tools onto a ToolRegistry."""
 
 from __future__ import annotations
 
@@ -28,12 +28,12 @@ def register_rbp_tools(
     include_raw_delivery: RawMode = "whitelist",
 ) -> tuple[ToolRegistry, list[str]]:
     """
-    Proposal entry: fill a nanobot ToolRegistry.
+    Register RBP tools onto a Nanobot ToolRegistry.
 
     ``include_raw_delivery``:
       - ``"whitelist"`` / ``True`` — Stage 0/3 extras only (default; avoids lit loops)
       - ``"all"`` — every delivery SCRIPT_MAP tool
-      - ``False`` / ``"none"`` — proposal P0–P2 only
+      - ``False`` / ``"none"`` — curated P0–P2 tools only
 
     Returns (registry, registered_names).
     """
@@ -46,7 +46,7 @@ def register_rbp_tools(
             ensure_nanobot_bio_on_path,
             get_delivery_client,
         )
-        from backends.delivery.registry import (
+        from rbp_agent.backends.delivery.registry import (
             STAGE_RAW_WHITELIST,
             build_delivery_raw_tools,
         )
@@ -65,10 +65,10 @@ def register_rbp_tools(
     return reg, names
 
 
-# Back-compat alias (canonical: backends.delivery.registry)
+# Back-compat alias (canonical: rbp_agent.backends.delivery.registry)
 def __getattr__(name: str):
     if name == "STAGE_RAW_WHITELIST":
-        from backends.delivery.registry import STAGE_RAW_WHITELIST as _w
+        from rbp_agent.backends.delivery.registry import STAGE_RAW_WHITELIST as _w
 
         return _w
     raise AttributeError(name)
