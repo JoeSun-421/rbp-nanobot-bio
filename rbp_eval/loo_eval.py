@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]  # nanobot-bio
 sys.path.insert(0, str(ROOT))
 
 from app.core.paths import DEFAULT_LOO_REPORT, ensure_artifact_dirs
+from rbp_eval.metrics import metrics_from_pairs
 
 DEFAULT_VAL = [
     "NSUN2",
@@ -180,6 +181,12 @@ def main() -> int:
     ap.add_argument("--out", default=str(DEFAULT_LOO_REPORT))
     ap.add_argument("--with-seq", action="store_true", help="Also try ESM donor axis (needs conda)")
     ap.add_argument("--ablation", action="store_true", help="Record modality ablation notes")
+    ap.add_argument(
+        "--labels",
+        type=str,
+        default=None,
+        help="JSON list of {p_hat|score, y, label?} for instance AUROC/AUPRC/ECE (A5)",
+    )
     args = ap.parse_args()
 
     summary_path, metrics_path = _paths()
@@ -286,11 +293,49 @@ def main() -> int:
     if not out.is_absolute():
         out = ROOT / out
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    # A5: instance-level metrics (AUROC/AUPRC/ECE) shared with evaluation_plan.
+    instance_level: dict[str, Any] = {
+        "status": "skipped",
+        "reason": "no --labels JSON provided (light protocol is transfer-CSV only)",
+        "auroc": None,
+        "auprc": None,
+        "ece": None,
+    }
+    if args.labels:
+        labels_path = Path(args.labels)
+        if labels_path.is_file():
+            try:
+                raw = json.loads(labels_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    pairs = raw.get("scored_labels") or raw.get("pairs") or []
+                else:
+                    pairs = raw
+                instance_level = metrics_from_pairs(list(pairs))
+                instance_level["source"] = str(labels_path)
+            except Exception as e:  # noqa: BLE001
+                instance_level = {
+                    "status": "error",
+                    "reason": f"{type(e).__name__}: {e}",
+                    "auroc": None,
+                    "auprc": None,
+                    "ece": None,
+                }
+        else:
+            instance_level = {
+                "status": "error",
+                "reason": f"labels file not found: {labels_path}",
+                "auroc": None,
+                "auprc": None,
+                "ece": None,
+            }
+
     payload = {
         "protocol": "LOO light: hide head, select donors, lookup loo_transfer_metrics (no RhoBind re-run)",
         "val_set": DEFAULT_VAL,
         "n": len(report_rows),
         "summary": summary_block,
+        "instance_level": instance_level,
         "rows": report_rows,
         "failures": failures,
         "ablation": ablation,

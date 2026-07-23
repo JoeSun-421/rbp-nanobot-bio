@@ -14,12 +14,12 @@ axes:
   embedding: true
   sequence: true
   domain: true
-  structure: false
+  structure: true
   use_af3: false
   function_annotation: true
-  rna_blastn: false
+  rna_blastn: true
   struct_align_refine: true
-  literature: false
+  literature: true
 fusion_weights:
   esmc_cosine: 1.0
   esm2_cosine: 0.5

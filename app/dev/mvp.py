@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Agent MVP dev (Agent Owner only — does not modify delivery).
+Agent MVP acceptance (Agent Owner only — does not modify delivery).
 
 Levels
 ------
@@ -316,7 +316,7 @@ def main() -> int:
 
     # ----- report -----
     print("=" * 64)
-    print("Agent MVP dev")
+    print("Agent MVP acceptance")
     print("=" * 64)
     by_level: dict[str, list[Check]] = {}
     for ch in checks:

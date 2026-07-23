@@ -256,8 +256,12 @@ def normalize_verdict(
         or evidence_flags.get("structure_unavailable")
         or evidence_flags.get("structure_axis_unavailable")
     )
-    force_low_evidence = prior_missing or structure_unavailable or bool(
-        evidence_flags.get("sequence_only")
+    low_head_coverage = bool(evidence_flags.get("low_head_coverage"))
+    force_low_evidence = (
+        prior_missing
+        or structure_unavailable
+        or low_head_coverage
+        or bool(evidence_flags.get("sequence_only"))
     )
 
     # Stage-3 evidence checklist (≥2 failures → confidence=low); Proposal faithfulness.
@@ -280,6 +284,7 @@ def normalize_verdict(
             "kingdom_mismatch",
             "rna_axis_unavailable",
             "sequence_only",
+            "low_head_coverage",
         ):
             if evidence_flags.get(key) or raw.get(key):
                 flag_fails += 1
@@ -371,6 +376,65 @@ def normalize_verdict(
         out["prior_missing"] = True
     if force_low_evidence and "structure_unavailable" not in out and structure_unavailable:
         out["structure_unavailable"] = True
+
+    # Faithfulness helpers: surface caveats + modality breakdown for Stage-3 audits
+    # B3: exhaustive soft-failure sources — every one must surface into caveats when
+    # its evidence flag is set (AF3 missing / structure soft-fail / literature offline
+    # / mmseqs segfault / low region plddt / axis skipped).
+    caveat_keys = (
+        "prior_missing",
+        "loo_prior_missing",
+        "structure_unavailable",
+        "structure_axis_unavailable",
+        "rna_axis_unavailable",
+        "domain_empty",
+        "kingdom_mismatch",
+        "sequence_only",
+        "af3_unavailable",
+        "af3_axis_skipped",
+        "structure_low_plddt",
+        "structure_clash",
+        "structure_mostly_disordered",
+        "region_plddt_low",
+        "literature_unavailable",
+        "mmseqs_segfall",
+        "low_head_coverage",
+    )
+    caveats = out.get("caveats")
+    if not isinstance(caveats, list):
+        caveats = []
+    for key in caveat_keys:
+        if (evidence_flags.get(key) or raw.get(key)) and key not in caveats:
+            caveats.append(key)
+    if caveats:
+        out["caveats"] = caveats
+
+    # Propagate donor modality maps onto supporting_rbps.similarity_breakdown
+    donors = raw.get("donors") if isinstance(raw.get("donors"), list) else []
+    donor_by_alias: dict[str, dict] = {}
+    for d in donors:
+        if not isinstance(d, dict):
+            continue
+        for key in ("alias", "rbp_id", "uniprot"):
+            if d.get(key):
+                donor_by_alias[str(d.get(key)).upper()] = d
+    for item in out.get("supporting_rbps") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("similarity_breakdown"):
+            continue
+        alias = str(item.get("alias") or item.get("rbp_id") or "").upper()
+        donor = donor_by_alias.get(alias)
+        if donor and isinstance(donor.get("sim_by_modality"), dict):
+            item["similarity_breakdown"] = dict(donor["sim_by_modality"])
+
+    abstain = out.get("abstain")
+    if force_low_evidence:
+        if not isinstance(abstain, dict):
+            abstain = {}
+        abstain = dict(abstain)
+        abstain["confident"] = False
+        out["abstain"] = abstain
     return out
 
 
@@ -405,6 +469,54 @@ def validate_verdict(v: dict[str, Any]) -> tuple[bool, list[str]]:
 def extract_verdict_from_content(content: str) -> dict[str, Any]:
     """Parse LLM prose or pure JSON into a normalized verdict."""
     return normalize_verdict(content)
+
+
+def normalize_verdict_with_turn_state(
+    content_or_raw: Any,
+    *,
+    thresholds: Optional[dict[str, float]] = None,
+    default_mode: str = "unknown",
+) -> dict[str, Any]:
+    """B3: normalize a verdict AND merge per-turn evidence flags from turn_guards.
+
+    The agent accumulates soft-failure flags (literature offline, AF3 unavailable,
+    structure low-plddt, axis skipped, …) in ``turn_guards._EVIDENCE_FLAGS`` as
+    tools execute. The LLM's emitted verdict JSON does not carry these, so without
+    this merge they never reach ``caveats``. This helper pulls them in before
+    normalization so every soft-failure surfaces (evidence-completeness audit).
+    """
+    # Parse to a raw dict first (reuse the same parsing normalize_verdict would).
+    if isinstance(content_or_raw, str):
+        parsed = _parse_json_object(content_or_raw)
+        raw: dict[str, Any] = parsed if parsed is not None else {
+            "explanation": content_or_raw,
+            "raw_content": content_or_raw,
+        }
+    elif content_or_raw is None:
+        raw = {}
+    elif isinstance(content_or_raw, dict):
+        raw = dict(content_or_raw)
+    else:
+        raw = {"raw": content_or_raw}
+
+    try:
+        from nanobot.agent.tools.rbp.turn_guards import evidence_flags
+
+        turn_flags = evidence_flags() or {}
+    except Exception:
+        turn_flags = {}
+
+    if turn_flags:
+        existing = raw.get("evidence_flags") or raw.get("flags") or {}
+        if isinstance(existing, list):
+            existing = {str(x): True for x in existing}
+        if not isinstance(existing, dict):
+            existing = {}
+        # Turn-state flags win only when not already explicitly set by the caller.
+        merged = {**turn_flags, **{k: v for k, v in existing.items() if v is not None}}
+        raw["evidence_flags"] = merged
+
+    return normalize_verdict(raw, thresholds=thresholds, default_mode=default_mode)
 
 
 def is_near_match_score(score: Any, threshold: float = 0.95) -> bool:

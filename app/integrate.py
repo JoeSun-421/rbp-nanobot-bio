@@ -40,7 +40,11 @@ sys.path.insert(1, _root_s)
 from app.backends.delivery.client import DeliveryToolClient
 from app.backends.delivery.env import apply_delivery_env
 from app.core.paths import DEFAULT_AGENT_TRACE, ensure_artifact_dirs
-from app.core.verdict_schema import extract_verdict_from_content, validate_verdict
+from app.core.verdict_schema import (
+    extract_verdict_from_content,
+    normalize_verdict_with_turn_state,
+    validate_verdict,
+)
 
 PACKAGE_ROOT = _ROOT
 WORKSPACE = PACKAGE_ROOT / "workspace"
@@ -114,12 +118,19 @@ def skill_path() -> Optional[Path]:
     return None
 
 
+def _raw_mode() -> str:
+    """Product default whitelist; override via RBP_RAW_TOOLS=all|none|whitelist."""
+    import os
+
+    return os.environ.get("RBP_RAW_TOOLS", "whitelist")
+
+
 def _register_tools(registry) -> list[str]:
-    """Register curated P0–P2 tools + all delivery-ready tools (final / all_ready)."""
+    """Register curated P0–P2 tools + delivery-ready tools (whitelist by default)."""
     try:
         from nanobot.agent.tools.rbp.register import register_rbp_tools
 
-        _reg, names = register_rbp_tools(registry, include_raw_delivery="all")
+        _reg, names = register_rbp_tools(registry, include_raw_delivery=_raw_mode())
         # Guard: empty ToolRegistry is falsy (has __len__); ensure tools land on caller registry
         if _reg is not registry and registry is not None:
             for n in names:
@@ -135,7 +146,7 @@ def _register_tools(registry) -> list[str]:
         install_rbp_tools_into_nanobot()
         from nanobot.agent.tools.rbp.register import register_rbp_tools
 
-        _reg, names = register_rbp_tools(registry, include_raw_delivery="all")
+        _reg, names = register_rbp_tools(registry, include_raw_delivery=_raw_mode())
         if _reg is not registry and registry is not None:
             for n in names:
                 t = _reg.get(n)
@@ -148,7 +159,7 @@ def _register_tools(registry) -> list[str]:
     # Fallback: delivery registry (requires real nanobot Tool base)
     from app.backends.delivery.registry import register_tools
 
-    return register_tools(registry, include_raw_delivery="all")
+    return register_tools(registry, include_raw_delivery=_raw_mode())
 
 
 # ---------------------------------------------------------------------------
@@ -293,9 +304,10 @@ class RBPAgent:
         loop = getattr(bot, "_loop", None)
         if loop is None or not hasattr(loop, "tools"):
             raise TypeError("Expected Nanobot instance with _loop.tools")
-        # Drop shell/network defaults that derail RNA–RBP evaluation (LLM may pip install).
-        # web_search / web_fetch are unregistered then replaced by redirect stubs
-        # from register_rbp_tools (clear error → use literature_search).
+        # Drop shell/network/filesystem defaults that derail RNA–RBP evaluation
+        # (LLM may pip install or read workspace dumps). These tools are simply
+        # unregistered — the LLM will not see them. literature_search is the
+        # supported retrieval path (see SKILL).
         for noisy in (
             "exec",
             "spawn",
@@ -398,6 +410,18 @@ class RBPAgent:
 
         try:
             bot = self.get_nanobot()
+            # Per-query Stage 0–3 guards (own-head STOP must not leak across turns).
+            try:
+                from nanobot.agent.tools.rbp.annotation import reset_tool_turn_guards
+
+                reset_tool_turn_guards()
+            except Exception:
+                try:
+                    from nanobot.agent.tools.rbp.turn_guards import reset_stage_guards
+
+                    reset_stage_guards()
+                except Exception:
+                    pass
             run_kwargs: dict[str, Any] = {
                 "session_key": session_key,
                 "hooks": hooks,
@@ -416,7 +440,9 @@ class RBPAgent:
             elif not isinstance(usage, dict):
                 usage = {}
             stop_reason = getattr(result, "stop_reason", None)
-            verdict = extract_verdict_from_content(content)
+            # B3: merge per-turn evidence flags (literature offline / AF3 soft-fail /
+            # axis skipped / …) so every soft-failure surfaces into verdict caveats.
+            verdict = normalize_verdict_with_turn_state(content)
             ok_v, verrs = validate_verdict(verdict)
             if hasattr(trace_hook, "emit_query_end"):
                 try:
@@ -515,6 +541,17 @@ class RBPAgent:
             )
 
             bot = self.get_nanobot()
+            try:
+                from nanobot.agent.tools.rbp.annotation import reset_tool_turn_guards
+
+                reset_tool_turn_guards()
+            except Exception:
+                try:
+                    from nanobot.agent.tools.rbp.turn_guards import reset_stage_guards
+
+                    reset_stage_guards()
+                except Exception:
+                    pass
             stream = await bot.run_streamed(
                 message,
                 session_key=session_key,
@@ -538,7 +575,7 @@ class RBPAgent:
                         renderer._buf = ""
             run_result = await stream.wait()
             content = getattr(run_result, "content", None) or ""
-            verdict = extract_verdict_from_content(content)
+            verdict = normalize_verdict_with_turn_state(content)
             ok_v, verrs = validate_verdict(verdict)
             return AgentResult(
                 content=content,

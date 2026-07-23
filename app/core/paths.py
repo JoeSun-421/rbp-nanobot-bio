@@ -21,6 +21,7 @@ SESSIONS = ARTIFACTS / "sessions"
 REPORTS = ARTIFACTS / "reports"
 CACHE = ARTIFACTS / "cache"
 STRUCTURE_CACHE = CACHE / "structure"
+LITERATURE_CACHE = CACHE / "literature"
 PROXY_CACHE = CACHE / "proxy_map.json"
 LOGS = ARTIFACTS / "logs"
 DIAG = ARTIFACTS / "diag"
@@ -39,7 +40,7 @@ _LEGACY_SESSIONS_LINK = PACKAGE_ROOT / "workspace" / "sessions"
 
 def ensure_artifact_dirs() -> dict[str, Path]:
     """Create artifact subdirs and maintain workspace/sessions compat symlink."""
-    for d in (TRACES, SESSIONS, REPORTS, CACHE, STRUCTURE_CACHE, LOGS, DIAG):
+    for d in (TRACES, SESSIONS, REPORTS, CACHE, STRUCTURE_CACHE, LITERATURE_CACHE, LOGS, DIAG):
         d.mkdir(parents=True, exist_ok=True)
 
     _ensure_symlink(_LEGACY_SESSIONS_LINK, SESSIONS)

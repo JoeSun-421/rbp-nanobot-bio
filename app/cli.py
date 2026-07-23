@@ -72,7 +72,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         sync_err = f"{type(e).__name__}: {e}"
     dirs = ensure_artifact_dirs()
     paths = resolve_delivery_paths()
-    print("=== rbp-agent doctor ===")
+    print("=== nanobot-bio doctor ===")
     print(f"DELIVERY_ROOT={paths['delivery_root']}")
     path_status: dict[str, dict[str, object]] = {}
     for k in ("rbp_registry", "predict_api", "registry_json", "agent_db", "rhobind_release"):
@@ -148,6 +148,32 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     skill = ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
     skill_ok = skill.is_file() and "always: true" in skill.read_text(encoding="utf-8")
     print(f"SKILL always-on: {'OK' if skill_ok else 'FAIL'}")
+
+    try:
+        from app.backends.delivery.stage_tools import (
+            assert_full_axes_enabled,
+            axis_status_matrix,
+        )
+        from app.core.runtime_config import load_runtime_config
+
+        _cfg = load_runtime_config()
+        _axes = _cfg.get("axes") or {}
+        _off = assert_full_axes_enabled(_axes)
+        _st = axis_status_matrix(_axes)
+        print(
+            "axes: "
+            + (
+                "OK (required on)"
+                if not _off
+                else f"REQUIRED_OFF={','.join(_off)}"
+            )
+            + f"  use_af3={_axes.get('use_af3')}  af3_runtime={_st.get('use_af3', 'n/a')}"
+        )
+        for k, v in _st.items():
+            if v != "ready":
+                print(f"  axis {k}: {v}")
+    except Exception as e:
+        print(f"axes: FAIL ({type(e).__name__}: {e})")
 
     matrix_path = None
     try:
@@ -247,6 +273,23 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "hf_home": os.environ.get("HF_HOME"),
         "hf_endpoint": os.environ.get("HF_ENDPOINT"),
     }
+    try:
+        from app.backends.delivery.stage_tools import (
+            assert_full_axes_enabled,
+            axis_status_matrix,
+        )
+        from app.core.runtime_config import load_runtime_config
+
+        _cfg = load_runtime_config()
+        _axes = dict(_cfg.get("axes") or {})
+        report["axes"] = {
+            "required_off": assert_full_axes_enabled(_axes),
+            "use_af3": bool(_axes.get("use_af3")),
+            "status": axis_status_matrix(_axes),
+            "prefer_afdb": (_cfg.get("structure_policy") or {}).get("prefer_afdb"),
+        }
+    except Exception as e:
+        report["axes"] = {"error": f"{type(e).__name__}: {e}"}
     out = REPORTS / "doctor_report.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -255,7 +298,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
-    from app.acceptance.gate import run_gate
+    from app.dev.gate import run_gate
 
     return int(
         run_gate(
@@ -302,16 +345,57 @@ def cmd_onboard(args: argparse.Namespace) -> int:
 
 
 def cmd_mvp(args: argparse.Namespace) -> int:
-    from app.acceptance.mvp import main as mvp_main
+    from app.dev.mvp import main as mvp_main
 
     return int(mvp_main())
 
 
 def cmd_own_head(args: argparse.Namespace) -> int:
     """Ideal-env scientific accept: delivery own-head on sample_rna_pos (no LLM)."""
-    from app.acceptance.own_head import main as own_main
+    from rbp_eval.own_head import main as own_main
 
-    return int(own_main())
+    skip_predict = bool(getattr(args, "skip_predict", False))
+    return int(own_main(skip_predict=skip_predict))
+
+
+def cmd_accept_golden(args: argparse.Namespace) -> int:
+    """Alias of own-head (Delivery accept-golden)."""
+    return cmd_own_head(args)
+
+
+def cmd_accept_llm(args: argparse.Namespace) -> int:
+    """LLM touchpoint acceptance (nanobot_llm + abstain-before-predict evidence)."""
+    from rbp_eval.accept_llm import run_accept_llm
+
+    report = run_accept_llm(
+        run_catalogue=not bool(getattr(args, "skip_catalogue", False)),
+        run_unseen=not bool(getattr(args, "skip_unseen", False)),
+        strict=not bool(getattr(args, "no_strict", False)),
+    )
+    print(f"accept-llm ok={report.get('ok')} path={report.get('path')}")
+    tp = report.get("touchpoints") or {}
+    print(
+        "touchpoints:",
+        {k: tp.get(k) for k in (
+            "stage1_function_or_donor",
+            "stage3_explanation",
+            "abstain_before_predict",
+            "parallel_or_dual_seq",
+        )}
+    )
+    return 0 if report.get("ok") else 1
+
+
+def cmd_gap_closure(args: argparse.Namespace) -> int:
+    """Lightweight Proposal/Delivery gap-closure evidence pack."""
+    from rbp_eval.gap_closure import main as gap_main
+
+    argv: list[str] = []
+    if getattr(args, "no_live", False):
+        argv.append("--no-live")
+    if getattr(args, "out_dir", None):
+        argv.extend(["--out-dir", str(args.out_dir)])
+    return int(gap_main(argv))
 
 
 def cmd_eval_plan(args: argparse.Namespace) -> int:
@@ -461,6 +545,7 @@ def cmd_promote_evolved(args: argparse.Namespace) -> int:
     try:
         path = promote_evolved_config(
             require_reports=not bool(getattr(args, "force", False)),
+            seed=bool(getattr(args, "seed", False)),
         )
     except Exception as e:
         print(f"promote-evolved FAIL: {e}", file=sys.stderr)
@@ -470,13 +555,13 @@ def cmd_promote_evolved(args: argparse.Namespace) -> int:
 
 
 def cmd_compliance(args: argparse.Namespace) -> int:
-    from app.acceptance.compliance import main as compliance_main
+    from app.dev.compliance import main as compliance_main
 
     return int(compliance_main())
 
 
 def cmd_layout(args: argparse.Namespace) -> int:
-    from app.acceptance.layout import main as layout_main
+    from app.dev.layout import main as layout_main
 
     try:
         layout_main()
@@ -859,7 +944,44 @@ def build_parser() -> argparse.ArgumentParser:
         "own-head",
         help="Ideal-env: delivery own-head on examples/sample_rna_pos (no LLM)",
     )
+    oh.add_argument(
+        "--skip-predict",
+        action="store_true",
+        help="Lightweight: resolve + near-known wiring only, skip rhobind_predict (no GPU)",
+    )
     oh.set_defaults(func=cmd_own_head)
+
+    ag = sub.add_parser(
+        "accept-golden",
+        help="Delivery accept-golden (alias of own-head)",
+    )
+    ag.add_argument(
+        "--skip-predict",
+        action="store_true",
+        help="Lightweight: resolve + near-known wiring only, skip rhobind_predict (no GPU)",
+    )
+    ag.set_defaults(func=cmd_accept_golden)
+
+    al = sub.add_parser(
+        "accept-llm",
+        help="LLM touchpoints accept (nanobot_llm + BUILD_SPEC order evidence)",
+    )
+    al.add_argument("--skip-catalogue", action="store_true")
+    al.add_argument("--skip-unseen", action="store_true")
+    al.add_argument(
+        "--no-strict",
+        action="store_true",
+        help="Do not require abstain_before_predict / nanobot_llm mode",
+    )
+    al.set_defaults(func=cmd_accept_llm)
+
+    gc = sub.add_parser(
+        "gap-closure",
+        help="Lightweight gap-closure evidence report (Stage-0 / order fixtures)",
+    )
+    gc.add_argument("--no-live", action="store_true", help="Skip live own-head smoke")
+    gc.add_argument("--out-dir", default=None)
+    gc.set_defaults(func=cmd_gap_closure)
 
     evo = sub.add_parser("evolve", help="Offline self-evolution")
     evo.add_argument("--top-k", type=int, default=5)
@@ -913,6 +1035,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip report asserts (dangerous; for offline fixtures only)",
     )
+    pe.add_argument(
+        "--seed",
+        action="store_true",
+        help="If evolved.candidate.yaml is missing, bootstrap it from the tracked "
+        "evolved.candidate.yaml.example seed (C6: makes the promote link "
+        "reproducible from a fresh clone).",
+    )
     pe.set_defaults(func=cmd_promote_evolved)
 
     ep = sub.add_parser(
@@ -932,7 +1061,7 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("compliance", help="Delivery path self-check")
     c.set_defaults(func=cmd_compliance)
 
-    lay = sub.add_parser("layout", help="Assert plugin SoT layout + Runtime ($NANOBOT_SRC) import")
+    lay = sub.add_parser("layout", help="Assert nanobot SoT layout + Runtime ($NANOBOT_SRC) import")
     lay.set_defaults(func=cmd_layout)
 
     n = sub.add_parser("nanobot-smoke", help="Register tools + start Nanobot")

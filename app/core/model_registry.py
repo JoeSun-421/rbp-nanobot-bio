@@ -43,9 +43,31 @@ def probe_model_capabilities() -> dict[str, Any]:
             else:
                 entry["status"] = "ready"
                 entry["reason"] = f"delivery present; conda_env={env_name}"
-                if name == "af3" and not (os.environ.get("AF3_PYTHON") or "").strip():
-                    entry["status"] = "degraded"
-                    entry["reason"] = "AF3_PYTHON unset; use AFDB/Foldseek fallback"
+                if name == "af3":
+                    status_file = Path(__file__).resolve().parents[2] / ".af3_status"
+                    first = ""
+                    if status_file.is_file():
+                        raw = status_file.read_text(encoding="utf-8", errors="replace")
+                        for line in raw.splitlines():
+                            if line.startswith("state="):
+                                first = line.split("=", 1)[1].strip().lower()
+                                break
+                        entry["af3_status_file"] = first or "unknown"
+                    if not (os.environ.get("AF3_PYTHON") or "").strip():
+                        entry["status"] = "degraded"
+                        entry["reason"] = "AF3_PYTHON unset; use AFDB/Foldseek fallback"
+                    if first == "ok":
+                        entry["status"] = "ready"
+                        entry["reason"] = "AF3 probe ok"
+                    elif first in ("deferred", "import_ok"):
+                        entry["status"] = "degraded"
+                        entry["reason"] = f".af3_status={first}; prefer AFDB"
+                    elif first in ("broken", "missing"):
+                        entry["status"] = "unavailable"
+                        entry["reason"] = f".af3_status={first}; AFDB only"
+                    elif not first and not (os.environ.get("AF3_PYTHON") or "").strip():
+                        entry["status"] = "degraded"
+                        entry["reason"] = "AF3_PYTHON unset; use AFDB/Foldseek fallback"
                 if name == "esm_c":
                     entry["cache"] = str(CACHE / "esm")
         elif backend == "agent_local":

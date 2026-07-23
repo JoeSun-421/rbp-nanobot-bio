@@ -34,13 +34,15 @@ def test_verdict_label_peek_and_color():
 def test_spinner_status_phases():
     sp = ThinkingSpinner(bot_name="rbp-agent")
     sp._enabled = False
-    sp._inner = None
     sp.update("thinking")
     t1 = sp._status_text()
-    assert "Thinking" in t1 or "…" in t1 or "s" in t1
+    assert "Thinking" in t1
     sp.update("seq_similarity")
     t2 = sp._status_text()
     assert "seq_similarity" in t2
+    # update with same hint must be a no-op (anti-flicker)
+    sp.update("seq_similarity")
+    assert sp._hint == "seq_similarity"
 
 
 def test_print_chrome_no_crash(capsys):

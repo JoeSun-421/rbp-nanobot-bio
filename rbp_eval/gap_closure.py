@@ -115,8 +115,17 @@ def _faithfulness_schema_ok() -> dict[str, Any]:
             "abstain": {"confident": True},
         }
     )
+    conf = v.get("confidence")
+    conf_ok = False
+    if isinstance(conf, str):
+        conf_ok = conf.strip().lower() == "low"
+    else:
+        try:
+            conf_ok = float(conf or 1) <= 0.30
+        except (TypeError, ValueError):
+            conf_ok = False
     ok = (
-        float(v.get("confidence") or 1) <= 0.30
+        conf_ok
         and "prior_missing" in (v.get("caveats") or [])
         and bool((v.get("supporting_rbps") or [{}])[0].get("similarity_breakdown"))
         and (v.get("abstain") or {}).get("confident") is False
@@ -240,14 +249,21 @@ def build_gap_closure_report(*, live_own_head: bool = True) -> dict[str, Any]:
 
     try:
         from app.core.runtime_config import load_runtime_config
-        from app.backends.delivery.stage_tools import assert_full_axes_enabled
+        from app.backends.delivery.stage_tools import (
+            assert_full_axes_enabled,
+            axis_status_matrix,
+        )
 
         cfg = load_runtime_config()
-        off = assert_full_axes_enabled(cfg.get("axes") or {})
+        axes = cfg.get("axes") or {}
+        off = assert_full_axes_enabled(axes)
         sections["axes"] = {
-            "all_on": not off,
-            "off": off,
+            "ok": not off,
+            "all_required_on": not off,
+            "required_off": off,
+            "use_af3": bool(axes.get("use_af3")),
             "prefer_afdb": (cfg.get("structure_policy") or {}).get("prefer_afdb"),
+            "status": axis_status_matrix(axes),
         }
     except Exception as e:
         sections["axes"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}

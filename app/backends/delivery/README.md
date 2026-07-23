@@ -25,7 +25,7 @@ Isolate scientific kernels (delivery) from the agent virtualenv, matching the su
 | `registry.py` | Whitelist, tool builders, payload normalize |
 | `stage_tools.py` | `STAGE_TOOL_SETS`, axis hard-gates |
 | `mapping.yaml` | Human-readable map aligned with `SCRIPT_MAP` |
-| `call_tool.py` / `examples.py` | Helpers |
+| `examples.py` | Golden / sample RNA helpers |
 
 ## Constraints
 

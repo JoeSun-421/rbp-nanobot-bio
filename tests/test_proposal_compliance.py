@@ -182,7 +182,7 @@ def test_near_match_threshold():
 
 def test_stage1_before_predict_in_skill_playbook():
     """Regression: SKILL playbook orders Stage 1 retrieval before Stage 2 predict."""
-    skill = ROOT / "plugin" / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
+    skill = ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
     src = skill.read_text(encoding="utf-8")
     i_s0 = src.find("Stage 0")
     i_s1 = src.find("Stage 1")
@@ -206,7 +206,7 @@ def test_mvp_tool_whitelist_excludes_literature_raw():
 
 def test_skill_playbook_locks_proposal_defaults_and_paths():
     """Proposal §4 / §8 + gate: SKILL must encode near-known, tau, N_cand, stages, caveats."""
-    skill = ROOT / "plugin" / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
+    skill = ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
     src = skill.read_text(encoding="utf-8")
     assert "near-known" in src
     assert "0.30" in src or "0.3" in src
@@ -247,8 +247,8 @@ def test_similarity_breakdown_in_fuse_and_verdict_supports_caveats():
 
 
 def test_proposal_sot_tool_modules_exist_at_transition_path():
-    """Proposal §6.2 target is repo-root agent/tools/rbp/; current SoT is nanobot/agent/tools/rbp/."""
-    sot = ROOT / "plugin" / "nanobot" / "agent" / "tools" / "rbp"
+    """SoT is repo-root nanobot/agent/tools/rbp/ (nanobot-like overlay)."""
+    sot = ROOT / "nanobot" / "agent" / "tools" / "rbp"
     for name in (
         "predict.py",
         "catalogue.py",
@@ -258,18 +258,19 @@ def test_proposal_sot_tool_modules_exist_at_transition_path():
         "common.py",
     ):
         assert (sot / name).is_file(), f"missing SoT module {name}"
-    assert (ROOT / "plugin" / "nanobot" / "skills" / "rbp-agent" / "SKILL.md").is_file()
-    # Soft: if layout is migrated to PDF §6.2, accept that tree too
-    legacy = ROOT / "agent" / "tools" / "rbp"
-    if legacy.is_dir():
-        assert (legacy / "predict.py").is_file() or (sot / "predict.py").is_file()
+    assert (ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md").is_file()
 
 
 def test_proposal_documents_present():
     """Engineering guide §9 is the in-repo gate SoT; proposal PDFs are optional/external."""
-    guide = (ROOT / "docs" / "工程指南.zh.md").read_text(encoding="utf-8")
+    guide_path = ROOT / "docs" / "工程指南.zh.md"
+    assert guide_path.is_file(), "docs/工程指南.zh.md must be tracked (gate SoT)"
+    guide = guide_path.read_text(encoding="utf-8")
     assert "## 9. 改动门禁" in guide
     assert "Proposal" in guide or "提案" in guide
+    assert (ROOT / "docs" / "proposal.md").is_file()
+    assert (ROOT / "docs" / "proposal.zh.md").is_file()
+    assert (ROOT / "docs" / "remediation-checklist.md").is_file()
 
 
 def test_evolved_live_requires_decision_artifact_when_present():

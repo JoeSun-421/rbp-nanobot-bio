@@ -22,7 +22,7 @@ def test_resolve_device_respects_force_cpu(monkeypatch):
     except ImportError:
         import importlib.util
 
-        p = ROOT / "plugin" / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
+        p = ROOT / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
         spec = importlib.util.spec_from_file_location("rbp_common_sot", p)
         mod = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
@@ -41,7 +41,7 @@ def test_resolve_device_explicit_cpu(monkeypatch):
     except ImportError:
         import importlib.util
 
-        p = ROOT / "plugin" / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
+        p = ROOT / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
         spec = importlib.util.spec_from_file_location("rbp_common_sot2", p)
         mod = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
@@ -58,7 +58,7 @@ def test_resolve_device_auto_does_not_import_torch(monkeypatch):
     import importlib.util
 
     # Load SoT module fresh so we can clear its CUDA cache
-    p = ROOT / "plugin" / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
+    p = ROOT / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
     spec = importlib.util.spec_from_file_location("rbp_common_notorch", p)
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

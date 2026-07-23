@@ -31,7 +31,11 @@ def run_accept_llm(
 
     def _one(case: str, message: str, *, expect_stage1: bool) -> None:
         try:
-            result = agent.run_sync(message, ephemeral=True)
+            result = agent.run_sync(
+                message,
+                ephemeral=True,
+                session_key=f"accept-llm:{case}",
+            )
             mode = result.mode
             verdict = result.verdict if isinstance(result.verdict, dict) else {}
             tools = list(result.tools_used or [])

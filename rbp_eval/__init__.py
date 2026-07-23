@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Evaluation package: traces, metrics, and self-evolution (``rbp_eval/``)."""
+"""Evaluation package: traces, metrics, scientific acceptance, self-evolution.
+
+C5 boundary: this package owns the **scientific** ``accept-*`` commands
+(``accept_llm``, ``own_head``/``accept-golden``) and the evaluation harnesses
+(``evaluation_plan``, ``loo_eval``, ``metrics``). Engineering gates
+(``gate`` / ``compliance`` / ``layout`` / ``mvp``) live in :mod:`app.dev`.
+"""
 
 __all__ = [
     "EvolutionReport",
+    "RBPTraceHook",
     "load_default_val_cases",
     "propose_toolkit_expansions",
     "retune_label_thresholds",
@@ -31,4 +38,8 @@ def __getattr__(name: str):
         from rbp_eval import runner as _r
 
         return getattr(_r, name)
+    if name == "RBPTraceHook":
+        from rbp_eval.nanobot_hooks import RBPTraceHook
+
+        return RBPTraceHook
     raise AttributeError(name)

@@ -32,7 +32,7 @@ jobs:
         run: bash scripts/check_secrets.sh
 
       - name: Ruff
-        run: ruff check rbp_agent rbp_eval tests
+        run: ruff check app rbp_eval tests
 
       - name: Pytest
         run: pytest -q
@@ -63,3 +63,170 @@ jobs:
           echo "own-head and light LOO/eval-plan require delivery + GPU/RAM."
           echo "Run locally: bash scripts/ci_gate.sh"
           echo "Or: rbp-agent gate"
+
+  # ---------------------------------------------------------------------------
+  # Science acceptance — runs on a self-hosted runner with delivery bundle +
+  # conda envs (GPU optional). Triggered on push to main and on tags.
+  # Add a self-hosted runner labeled `self-hosted, linux, science` and set the
+  # repo secret DELIVERY_BUNDLE_PATH (absolute path to rhobind_agent_delivery
+  # on the runner host) to enable.
+  # ---------------------------------------------------------------------------
+  science:
+    if: github.repository == 'JoeSun-421/rbp-nanobot-bio'
+    runs-on: [self-hosted, linux, science]
+    timeout-minutes: 60
+    env:
+      BIO_ROOT: ${{ github.workspace }}/_bio_root
+      NANOBOT_SRC: ${{ github.workspace }}/_runtime_nanobot
+      NANOBOT_BIO_ROOT: ${{ github.workspace }}
+      DELIVERY_ROOT: ${{ secrets.DELIVERY_BUNDLE_PATH }}
+      NANOBOT_CONFIG: ${{ secrets.NANOBOT_CONFIG_PATH }}
+      RHOBIND_DEVICE: ${{ vars.RHOBIND_DEVICE || 'auto' }}
+    steps:
+      - name: Checkout App
+        uses: actions/checkout@v4
+
+      - name: Checkout Nanobot runtime
+        uses: actions/checkout@v4
+        with:
+          repository: HKUDS/nanobot
+          path: _runtime_nanobot
+          fetch-depth: 1
+
+      - name: Link BIO_ROOT layout
+        run: |
+          mkdir -p "$BIO_ROOT"
+          ln -sfn "$NANOBOT_SRC" "$BIO_ROOT/nanobot"
+          ln -sfn "$GITHUB_WORKSPACE" "$BIO_ROOT/nanobot-bio"
+          echo "DELIVERY_ROOT=$DELIVERY_ROOT"
+          test -d "$DELIVERY_ROOT/agent" || { echo "DELIVERY_BUNDLE_PATH invalid"; exit 1; }
+
+      - name: Set up Python (app venv)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install App (lock + editable dev)
+        run: |
+          python -m pip install -U pip setuptools wheel
+          pip install -r requirements.lock
+          pip install -e ".[dev]"
+          # expose sibling nanobot runtime to venv
+          SITE=$(python -c 'import site; print(site.getsitepackages()[0])')
+          echo "$(dirname "$NANOBOT_SRC")" > "$SITE/_nanobot_src.pth"
+          pip install -e "$NANOBOT_SRC" || true
+
+      - name: Sync plugin overlay
+        env:
+          PYTHONPATH: "$BIO_ROOT:$GITHUB_WORKSPACE${PYTHONPATH:+:$PYTHONPATH}"
+        run: python -m app.sync_overlay
+
+      - name: Engineering gate (ruff + pytest + layout + optional LOO)
+        run: rbp-agent gate
+
+      - name: Accept-golden (lightweight if no GPU)
+        run: |
+          if conda run -n rhobind python -c "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+            rbp-agent accept-golden
+          else
+            echo "[science] no CUDA — running accept-golden --skip-predict"
+            rbp-agent accept-golden --skip-predict
+          fi
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: science-reports
+          path: |
+            artifacts/reports/
+            artifacts/traces/
+
+  # ---------------------------------------------------------------------------
+  # B5: Evaluation job — runs the ablation + ECE protocol on tag releases.
+  # Triggered on version tags (v*) and manual dispatch. Produces
+  # evaluation_plan_report.{json,md} + loo_report.{json,md} with the Stage-3
+  # de-LLM-explanation ablation (A4) and instance ECE (A5) when labels are
+  # available; otherwise runs the light (transfer-CSV) protocol.
+  # ---------------------------------------------------------------------------
+  eval:
+    if: github.repository == 'JoeSun-421/rbp-nanobot-bio' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, linux, science]
+    timeout-minutes: 90
+    env:
+      BIO_ROOT: ${{ github.workspace }}/_bio_root
+      NANOBOT_SRC: ${{ github.workspace }}/_runtime_nanobot
+      NANOBOT_BIO_ROOT: ${{ github.workspace }}
+      DELIVERY_ROOT: ${{ secrets.DELIVERY_BUNDLE_PATH }}
+      NANOBOT_CONFIG: ${{ secrets.NANOBOT_CONFIG_PATH }}
+      RHOBIND_DEVICE: ${{ vars.RHOBIND_DEVICE || 'auto' }}
+    steps:
+      - name: Checkout App
+        uses: actions/checkout@v4
+
+      - name: Checkout Nanobot runtime
+        uses: actions/checkout@v4
+        with:
+          repository: HKUDS/nanobot
+          path: _runtime_nanobot
+          fetch-depth: 1
+
+      - name: Link BIO_ROOT layout
+        run: |
+          mkdir -p "$BIO_ROOT"
+          ln -sfn "$NANOBOT_SRC" "$BIO_ROOT/nanobot"
+          ln -sfn "$GITHUB_WORKSPACE" "$BIO_ROOT/nanobot-bio"
+          test -d "$DELIVERY_ROOT/agent" || { echo "DELIVERY_BUNDLE_PATH invalid"; exit 1; }
+
+      - name: Set up Python (app venv)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install App (lock + editable dev)
+        run: |
+          python -m pip install -U pip setuptools wheel
+          pip install -r requirements.lock
+          pip install -e ".[dev]"
+          SITE=$(python -c 'import site; print(site.getsitepackages()[0])')
+          echo "$(dirname "$NANOBOT_SRC")" > "$SITE/_nanobot_src.pth"
+          pip install -e "$NANOBOT_SRC" || true
+
+      - name: Sync plugin overlay
+        env:
+          PYTHONPATH: "$BIO_ROOT:$GITHUB_WORKSPACE${PYTHONPATH:+:$PYTHONPATH}"
+        run: python -m app.sync_overlay
+
+      - name: Evaluation Plan (light + ablation + ECE)
+        run: |
+          # A4/A5/B4: light transfer-CSV protocol; --no-llm-explanation records the
+          # Stage-3 de-LLM ablation when label fixtures are present under
+          # artifacts/eval/ (no_llm.json, full_llm.json). Missing fixtures → the
+          # ablation block reports `skipped` but the run still succeeds.
+          LABELS=""
+          LLM=""
+          if [ -f artifacts/eval/no_llm.json ]; then LABELS="--labels artifacts/eval/no_llm.json"; fi
+          if [ -f artifacts/eval/full_llm.json ]; then LLM="--labels-llm artifacts/eval/full_llm.json"; fi
+          python -m rbp_eval.evaluation_plan \
+            --out artifacts/reports/evaluation_plan_report.json \
+            --md  artifacts/reports/evaluation_plan_report.md \
+            --qual artifacts/reports/faithfulness_rating_sheet.csv \
+            $LABELS $LLM --no-llm-explanation
+
+      - name: LOO light (with ECE when labels present)
+        run: |
+          LABELS=""
+          if [ -f artifacts/eval/no_llm.json ]; then LABELS="--labels artifacts/eval/no_llm.json"; fi
+          python -m rbp_eval.loo_eval \
+            --out artifacts/reports/loo_report.json \
+            $LABELS || true
+
+      - name: Upload eval reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-reports
+          path: |
+            artifacts/reports/evaluation_plan_report.*
+            artifacts/reports/loo_report.*
+            artifacts/reports/faithfulness_rating_sheet.csv

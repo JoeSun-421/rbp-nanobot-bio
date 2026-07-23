@@ -1,85 +1,194 @@
 # nanobot-bio
 
 [![Python](https://img.shields.io/badge/python-%E2%89%A53.10-blue.svg)](https://www.python.org/)
-[![Release](https://img.shields.io/badge/release-v0.4.0-green.svg)](https://github.com/JoeSun-421/rbp-nanobot-bio/releases)
+[![Release](https://img.shields.io/badge/release-v0.5.0-green.svg)](https://github.com/JoeSun-421/rbp-nanobot-bio/releases)
 
 **English** | [中文](README.zh.md)
 
-Application layer for *in silico* RNA–RBP interaction assessment. CLI `nanobot-bio` (alias `rbp-agent`) orchestrates a read-only science toolkit (`rhobind_agent_delivery`) through [Nanobot](https://github.com/HKUDS/nanobot). Binding scores come **only** from predictor tools; the LLM plans tool calls and writes grounded explanations.
+Application package that answers: *Does RNA \(R\) interact with RBP \(X\)?*  
+Orchestration runs on [Nanobot](https://github.com/HKUDS/nanobot). Scientific scores are produced only by tools in `rhobind_agent_delivery` (read-only from this repo).
 
-## Repository layout
+| Document | Path | Role |
+|----------|------|------|
+| This README | repository root | Install, run, accept (Delivery / users) |
+| Proposal (EN/ZH) | [`docs/proposal.md`](docs/proposal.md) · [`docs/proposal.zh.md`](docs/proposal.zh.md) | Task, stages, Table 2–3 |
+| Delivery requirements (ZH mirror) | [`docs/delivery要求.zh.md`](docs/delivery要求.zh.md) | BUILD_SPEC / HANDOFF / registry mirror |
+| Remediation checklist | [`docs/remediation-checklist.md`](docs/remediation-checklist.md) · [`docs/整改清单.zh.md`](docs/整改清单.zh.md) | Requirement × implementation matrix |
+
+> `docs/` is local by default (gitignored except `docs/worklog/`). Ship copies to partners as needed. Machine-readable tool list: `$DELIVERY_ROOT/agent/tools/registry.json`.
+
+---
+
+## 1. Scope and boundaries
+
+| In scope (this repo) | Out of scope |
+|----------------------|--------------|
+| Agent CLI, skill, curated tools, delivery **bridge** | Editing `rhobind_agent_delivery/` sources, weights, or registry |
+| Offline eval / evolve (`rbp_eval/`) | Online weight writes; inventing `p_hat` / `prob` |
+| JSON verdict schema + Stage guards | Delivery **v2** tools not in registry (`score_calibration`, motif, saliency, HDOCK) |
+| LLM planning + grounded explanation | Claiming calibrated P(bind) without a calibration tool + ECE evidence |
+
+**Field semantics (acceptance wording):**
+
+| Field | Meaning in this product |
+|-------|-------------------------|
+| `p_hat` | Score from predictor / `similarity_weighted_vote` (raw). Not Delivery v2 calibrated probability. |
+| `confidence` | Rules + Stage-3 checklist (and related flags). Not calibrated P(bind). |
+| `label` | `{Strong, Likely, Unlikely, No}` from Table-3 cuts on `p_hat` (defaults 0.75 / 0.50 / 0.25). |
+
+---
+
+## 2. Architecture (Proposal §3 × Delivery layers)
+
+```text
+User / Delivery acceptance
+        │
+        ▼
+nanobot-bio CLI  →  Nanobot.run / run_streamed
+        │
+        ├─ nanobot/  (skill + Tool subclasses)            ← Toolkit SoT
+        ├─ app/backends/delivery  (JSON bridge)          ← read-only adapter
+        └─ rbp_eval/  (offline LOO / eval-plan / evolve) ← Validation Evaluator
+                │
+                ▼
+        rhobind_agent_delivery  (Predictor + DBs + ready tools)
+```
+
+| Layer | Path / env | Responsibility |
+|-------|------------|----------------|
+| Agent Controller | Nanobot + `nanobot/skills/rbp-agent/SKILL.md` | Plan tools, two LLM checkpoints, emit JSON |
+| Toolkit | `nanobot/agent/tools/rbp/` + delivery scripts via bridge | Sequence / structure / function / integrate |
+| Predictor | delivery `rhobind_predict` (conda `rhobind`) | Binding `prob` |
+| Offline eval | `rbp_eval/` | LOO, ablations, evolve-eval (no chat path) |
+
+---
+
+## 3. Repository layout
 
 ```text
 nanobot-bio/
-  app/           # CLI, delivery bridge, chat UX, overlay sync
-  plugin/        # Plugin SoT: skills/rbp-agent + agent/tools/rbp
-  config/        # defaults.yaml / evolved.yaml
-  rbp_eval/      # Offline LOO / eval-plan / evolve-eval / accept-llm
-  scripts/       # setup / CI helpers
-  tests/         # pytest
-  docs/          # Local engineering notes (not required for install)
+  app/                 # CLI, integrate, delivery bridge, core, dev (acceptance)
+  nanobot/             # SoT (Proposal §6.2): skills/rbp-agent + agent/tools/rbp
+  config/defaults.yaml # Table-3 defaults, axes, fusion, models
+  rbp_eval/            # Offline evaluation
+  scripts/             # setup_all.sh, CI helpers
+  tests/               # pytest (contract / compliance)
+  docs/                # Proposal, delivery mirror, checklists (local)
+  workspace/           # Default Nanobot workspace (skill sync target)
+  artifacts/           # Runtime reports/traces/cache (gitignored)
 ```
 
-| Layer | Path | Role |
-|-------|------|------|
-| App | `app/` | `nanobot-bio` CLI, bridge, config load, sync into runtime |
-| Plugin SoT | `plugin/nanobot/` | Skills + RBP tools (synced to `$NANOBOT_SRC`) |
-| Eval | `rbp_eval/` | Offline validation / evolution (no online weight writes) |
-| Science | `$DELIVERY_ROOT` | Read-only RhoBind / search DBs (not edited here) |
-| Runtime | `$NANOBOT_SRC` | Nanobot agent loop (sibling install or clone) |
+Runtime data may also use `~/.nanobot-bio/{workspace,artifacts}` when env overrides are set. Code defaults: repo-root `artifacts/` via `app.core.paths`.
+Acceptance commands are top-level CLI (`accept-golden`, `accept-llm`, `gap-closure`); helpers live in `app/dev/`.
 
-## What it does
+---
 
-- **In-catalogue (Stage 0):** `resolve_rbp` → own-head `predict_interaction` → JSON verdict → STOP
-- **Near-known:** seq identity ≥ 95% → headed donor once → STOP
-- **Unseen:** characterize → parallel retrieve → fuse → **abstain** → predict donors → integrate → JSON
-- **Isolation:** heavy torch / mmseqs in conda subprocesses; agent stays light
-- **Honesty:** no invented `p_hat`; structure failure ≠ similarity `0`; confidence is rules/checklist (not calibrated P(bind))
+## 4. Control flow (BUILD_SPEC × Proposal stages)
 
-## Requirements
+| Path | Steps |
+|------|--------|
+| **Catalogue (Stage 0)** | `resolve_rbp` → if `in_panel` → `predict_interaction` once → JSON → **STOP** |
+| **Near-known** | `check_near_known` (seq identity ≥ 0.95) → headed donor once → JSON → **STOP** |
+| **Unseen** | characterize → parallel retrieve (`hits_emb`+`hits_seq`, …) → `fuse_similarity_views` → **`confidence_abstain`** → `predict_interaction` on donors → integrate (`transfer_prior` / `donor_quality` / `similarity_weighted_vote`) → JSON |
 
-- Python ≥ 3.10
-- Sibling Nanobot runtime (`$NANOBOT_SRC`) and `rhobind_agent_delivery` (`$DELIVERY_ROOT`)
-- Optional: GPU + delivery conda envs (RhoBind / ESM / AF3)
+Defaults (Table 3 / `config/defaults.yaml`): `n_cand=5`, `tau_drop=0.30`, near-match `0.95`, label cuts `0.75/0.50/0.25`.
 
-## Install
+**Axes note:** shipped defaults enable `structure` / `rna_blastn` / `literature` with AFDB preferred; `use_af3` stays false until AF3 env probe is green. Structure failure must not be scored as similarity `0`.
+
+---
+
+## 5. Requirements
+
+- Python ≥ 3.10  
+- Sibling / configured Nanobot: `$NANOBOT_SRC`  
+- Delivery tree: `$DELIVERY_ROOT` (= `rhobind_agent_delivery`)  
+- Optional GPU + conda envs: `protein_embed`, `rna`, `rhobind`, `af3`  
+- LLM API for `agent` / `chat` / `accept-llm` (`nanobot-bio onboard`)
+
+---
+
+## 6. Install
 
 ```bash
 cd nanobot-bio
+# Full science stack (AF3 harden may mark deferred/broken on some GPUs; ≠ App failure):
 bash scripts/setup_all.sh
+# Faster agent-focused install:
+# bash scripts/setup_all.sh --skip-af3
+
 source .venv/bin/activate
-nanobot-bio onboard    # LLM provider / API key
+nanobot-bio onboard
 nanobot-bio doctor
 ```
 
-## Quick start
+Environment variables (typical):
 
-```bash
-nanobot-bio doctor
-nanobot-bio agent --message "Does this RNA interact with RBP PTBP1? RNA: <seq>"
-nanobot-bio chat
-```
+| Variable | Purpose |
+|----------|---------|
+| `BIO_ROOT` | Parent of `nanobot-bio` and delivery |
+| `DELIVERY_ROOT` | Delivery package root |
+| `NANOBOT_SRC` | Installed nanobot package or clone |
+| `NANOBOT_WORKSPACE` | Default `~/.nanobot-bio/workspace` |
+| `AGENT_DB` / `RBP_REGISTRY` / … | Set by delivery `setup.sh` / App env apply |
 
-## Commands
+---
+
+## 7. Commands
 
 | Command | Audience | Purpose |
 |---------|----------|---------|
-| `doctor` / `onboard` | User | Paths, registry, skill sync, LLM config |
-| `agent` / `chat` | User | Product Nanobot runs |
-| `dev accept-golden` / `dev accept-llm` / `dev eval-plan` | Maintainer / Delivery | Acceptance & eval |
-| `dev loo-heavy` / `dev evolve-eval` | Maintainer | Offline science loops |
+| `nanobot-bio doctor` | All | Paths, registry, skill sync, axes / AF3 status |
+| `nanobot-bio onboard` | User | LLM provider / API key |
+| `nanobot-bio agent` / `chat` | User | Product runs (`Nanobot.run` / streamed) |
+| `nanobot-bio accept-golden` | Delivery | Own-head golden (~0.966 on delivery pos RNA × PTBP1) |
+| `nanobot-bio accept-llm` | Delivery | `mode=nanobot_llm` + touchpoint evidence |
+| `nanobot-bio gap-closure` | Delivery | Stage-0 / order fixture evidence pack |
+| `nanobot-bio eval-plan` | Delivery / science | Ablation / metrics protocol |
+| `nanobot-bio layout` / `gate` | CI | SoT layout + engineering gate |
 
-## Configuration
+Reports: repo `artifacts/reports/` (or `~/.nanobot-bio/artifacts/reports/` when overridden).
 
-Defaults: [`config/defaults.yaml`](config/defaults.yaml) (Table-3 thresholds, fusion weights, axes, `models:`). Use `config/evolved.yaml` only when `evolved: true` and gates pass.
+**Acceptance authority:** `nanobot-bio accept-golden` is the authoritative acceptance path for collaborators — it wraps and extends the delivery-native smoke assertions. `rhobind_agent_delivery/agent/examples/run_example.sh` is a delivery-only regression smoke (exercises delivery scripts directly, no app layer) and is **not** part of app acceptance; use it only when debugging a single delivery tool.
 
-## Delivery / Proposal notes
+```bash
+nanobot-bio doctor
+nanobot-bio accept-golden
+nanobot-bio accept-llm
+nanobot-bio gap-closure
+nanobot-bio agent --message "Does this RNA interact with RBP PTBP1? RNA: <seq>"
+pytest tests/test_proposal_compliance.py -q
+```
 
-- Do **not** modify `rhobind_agent_delivery/` from this App.
-- Product path is LLM agent (`Nanobot.run` / `run_streamed`), not a fixed Python DAG.
-- `score_calibration` is Delivery **v2** (not in registry) — do not claim calibrated probabilities.
-- Conflict ledger (local): `docs/冲突台账.zh.md`. Status: `docs/STATUS.md`.
+---
 
-## License / contact
+## 8. Configuration
 
-Internal working package for the RBP agent delivery. See `CHANGELOG.md` for version history.
+| File | Content |
+|------|---------|
+| [`config/defaults.yaml`](config/defaults.yaml) | `n_cand`, `tau_drop`, `label_thresholds`, `axes`, `fusion_weights`, `abstain_thresholds`, `llm`, `models` |
+| `config/evolved.yaml` | Used only when evolved config is promoted under offline gates |
+
+Structure policy: prefer AFDB (`structure_fetch`) before AF3. Structure tool failure must not be encoded as similarity `0`.
+
+---
+
+## 9. Compliance matrix (summary)
+
+Full matrix: [`docs/整改清单.zh.md`](docs/整改清单.zh.md).
+
+| Area | Status vs Proposal / Delivery |
+|------|-------------------------------|
+| P0 tools + Stage 0 STOP | Present |
+| Dual-axis seq + fuse + abstain-before-predict | Present in skill/tools |
+| Integrate E1–E4 | Bridged from delivery |
+| Ready-tool registration (`all`) | Present |
+| Calibrated P(bind) / `score_calibration` | **Not claimed**; v2 OUT |
+| Default axes all-on | Check `defaults.yaml` on the acceptance host |
+| AF3 import probe | Host-dependent (see `.af3_status`) |
+| Full-panel LOO / ECE reports | Commands present; numbers only if reports generated |
+
+---
+
+## 10. Version
+
+See [`CHANGELOG.md`](CHANGELOG.md). Current release tag: **v0.4.0**.

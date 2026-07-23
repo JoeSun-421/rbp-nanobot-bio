@@ -4,6 +4,54 @@ Changes to the RBP Agent application (`nanobot-bio`). Format: [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-23
+
+### Added — functional gaps (delivery contract alignment)
+
+- **A1 structure-file input modality:** `resolve_rbp` accepts a local PDB/CIF `structure_file` path; short-circuits delivery resolve and hands `pdb_path` straight to `struct_similarity`.
+- **A2 phmmer remote-homology axis:** optional `phmmer_similarity` curated tool (opt-in via `RBP_PHMMER=1`); documented in SKILL as a distant-homology fallback, default off.
+- **A3 concurrency_safe:** curated Stage-1 retrieve tools declare `concurrency_safe` so the runner can truly parallelize the four-view retrieve.
+- **A4 Stage-3 no-LLM-explanation ablation:** `evaluation_plan --no-llm-explanation` + `--labels-llm` produce a delta-metrics block (AUROC/AUPRC/ECE) for the proposal §9(iii) ablation.
+- **A5 ECE in loo_eval:** `loo_eval --labels` emits an instance-level metrics block (AUROC/AUPRC/ECE).
+- **A6 literature TTL cache:** `literature_search` memoizes results under `artifacts/cache/literature/<rbp>.json` with a 7-day TTL (cross-session, AF3-cache pattern).
+- **A7 latency_ms consistency:** all `execute` paths use `timed_call`; cache hits report real wall-time `latency_ms` (no more `0.0` on hits).
+
+### Changed — optimizations (faithfulness)
+
+- **B1 AF3 confidence fields on demand:** `predict_structure` filters heavy AF3 payload fields; `region_plddt`/`mean_plddt`/`iptm` surface into caveats when low (<50); SKILL directs passing `regions=[[start,end]]` after `domain_architecture`.
+- **B2 stage scheduling prevention:** declarative `stage_contract.py` (STAGE_RETRIEVE / REQUIRES / OWN_HEAD_STOP_BLOCKED) drives `turn_guards` data-driven prerequisite checks instead of ad-hoc guards.
+- **B3 caveats evidence-completeness audit:** `normalize_verdict_with_turn_state` merges turn-state evidence flags into `caveats`; delivery-backed `structure_fetch`/`domain_architecture`/`literature` soft-fails now surface as `structure_axis_unavailable` / `domain_empty` / `literature_unavailable` flags.
+- **B4 unified metrics:** shared `rbp_eval/metrics.py::metrics_from_pairs` (AUROC/AUPRC/ECE) consumed by both `evaluation_plan` and `loo_eval`.
+- **B5 CI science job:** `.github/workflows/ci.yml` `eval` job (tag-triggered, self-hosted `science` runner) runs the Stage-3 ablation + ECE and uploads `eval-reports`.
+
+### Changed — simplifications
+
+- **C1 trimmed 6 redirect stubs:** removed `web_search`/`web_fetch`/`read_file`/`grep`/`list_dir`/`find_files` stubs from `ALL_RBP_TOOL_CLASSES`.
+- **C2 raw-delivery whitelist default:** `include_raw_delivery` default narrowed from `all` (37) to `whitelist`; opt into `all` via `RBP_RAW_TOOLS=all`.
+- **C3 acceptance-path unification:** `accept-golden` is the authoritative acceptance path; delivery `run_example.sh` left untouched (read-only) and documented as delivery-native smoke only.
+- **C5 app/dev ↔ rbp_eval boundary:** scientific `accept-*` (`accept_llm`, `own_head`/`accept-golden`) consolidated into `rbp_eval/`; `app/dev` retains engineering gates only.
+- **C6 evolved-config promote link:** tracked `config/evolved.candidate.yaml.example` seed + `promote-evolved --seed` bootstrap; flow documented in `RELEASE.md §9`.
+
+### Added — v0.5.0 review fixes (RBM20 trace)
+
+- **F1 delivery-backed soft-fail surfacing:** `structure_fetch` error → `structure_axis_unavailable`; `domain_architecture` `domain_source:"none"` → `domain_empty` evidence flags reach verdict caveats.
+- **F2 head-coverage caveat:** `predict_interaction` multi-head with null-prob donors surfaces `low_head_coverage`; verdict schema forces low confidence and lists it as a caveat (abstain gate no longer passes on embedding similarity alone when heads are missing).
+- **F3 function/annotation axis hard rule:** SKILL marks `get_func_annotation` + `literature_search` required on the unseen path; motifs/domain/family annotations must come from tools, never model memory.
+- **F4 AF3-fallback/caveat:** SKILL directs `predict_structure` on `structure_fetch` error when `use_af3_fallback` is on, else surface `structure_axis_unavailable` caveat.
+- **F5 domain network re-call doc:** SKILL documents the `domain_architecture` `network=true` slow InterProScan path and the default (accept empty axis + `domain_empty` caveat).
+
+### Changed
+
+- **Layout:** physical SoT at repo-root `nanobot/` (removed `plugin/`); deleted orphan `app/artifacts`, `app/workspace`, `app/acceptance`, and unwired dead modules.
+- **Guards:** transfer path requires fuse → confidence_abstain → predict (`turn_guards` + DeliveryBackedTool).
+- **CLI:** `accept-golden`, `accept-llm`, `gap-closure` top-level; CI ruff checks `app rbp_eval tests`.
+- Defaults: structure/rna_blastn/literature on; `use_af3` false (AFDB preferred).
+
+### Changed (earlier)
+
+- **Layout (safer pass):** repo-root `nanobot/` → SoT path (symlink to `plugin/nanobot`); `app/sot` prefers `nanobot/`; acceptance logic lives in `app/dev/` with `app/acceptance` as shim; root `AGENTS.md` restored.
+- Defaults: enable `structure` / `rna_blastn` / `literature` axes (`use_af3` still false); `setup_all.sh` jax probe accepts ≥0.4.
+
 ## [0.4.0] — 2026-07-23
 
 ### Added

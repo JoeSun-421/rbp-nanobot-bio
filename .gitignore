@@ -37,6 +37,13 @@ config/evolved.candidate.yaml
 docs/*
 !docs/worklog/
 !docs/worklog/**
+# Tracked dual-SoT docs (proposal / delivery mirror / gates / checklists)
+!docs/proposal.md
+!docs/proposal.zh.md
+!docs/工程指南.zh.md
+!docs/整改清单.zh.md
+!docs/remediation-checklist.md
+!docs/delivery要求.zh.md
 
 # Proposal binaries (do not require in-repo)
 RNA_RBP_Agent_Proposal.docx

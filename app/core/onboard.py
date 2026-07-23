@@ -370,9 +370,19 @@ def interactive_onboard(path: Path = DEFAULT_CONFIG) -> bool:
             + f"  {s.bold(provider)} · {model}\n"
             + s.dim("  Next:  rbp-agent chat   (Nanobot.from_config → Nanobot.run)\n\n")
         )
+        # Secrets hygiene reminder (config.json lives outside the repo; never
+        # commit it, and rotate the key when done testing).
+        sys.stderr.write(
+            s.yellow(
+                "  ⚠ This file contains your API key. Do NOT commit it, share it,\n"
+                "    or paste it into chats. Rotate/delete the key in the vendor\n"
+                "    console when you are done testing.\n\n"
+            )
+        )
         sys.stderr.flush()
     except Exception:
         print(f"saved → {path}  [{provider} · {model}]")
+        print("WARNING: this file contains your API key — do not commit or share it.")
     return True
 
 
@@ -438,4 +448,5 @@ def _plain_onboard(path: Path) -> bool:
         path=path,
     )
     print(f"saved → {path}  [{provider} · {model}]")
+    print("WARNING: this file contains your API key — do not commit or share it.")
     return True

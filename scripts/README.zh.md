@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-**nanobot-bio** 的安装与工程门禁脚本。验收逻辑在可 import 的 `app.acceptance` 中（对应 pytest / ruff / Lightning 等仓库的 CI 入口组织方式）。
+**nanobot-bio** 的安装与工程门禁脚本。验收逻辑在 `app.dev`（CLI：`nanobot-bio accept-golden|accept-llm|gap-closure|layout|gate`）。
 
 | 脚本 | 作用 |
 |------|------|

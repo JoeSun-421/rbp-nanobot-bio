@@ -249,11 +249,14 @@ PY
 import jax, triton
 import alphafold3  # noqa: F401
 print("jax", jax.__version__, "triton", triton.__version__, "devices", jax.devices())
-assert jax.__version__.startswith("0.4."), jax.__version__
+# AF3 historically pinned jax 0.4.*; accept 0.4+ (0.5/0.6 stacks are deferred-capable).
+_jv = tuple(int(x) for x in jax.__version__.split(".")[:2])
+assert _jv >= (0, 4), jax.__version__
 print("import OK")
 PY
   then
-    _write_status broken "import_failed"
+    # Imports failed: prefer deferred (AFDB path still valid) over broken hard-stop.
+    _write_status deferred "import_failed_use_afdb"
     return 0
   fi
 

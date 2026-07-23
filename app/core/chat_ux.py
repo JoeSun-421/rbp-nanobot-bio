@@ -399,123 +399,143 @@ def read_user_message(prompt: str = "❯ ") -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Spinner — phase verbs + elapsed (Claude Code–inspired; clear done signal)
+# Spinner — single in-place line (anti-flicker; no Rich status / verb rotation)
 # ---------------------------------------------------------------------------
 
-_SPINNER_VERBS = (
-    "Thinking",
-    "Retrieving",
-    "Reasoning",
-    "Planning",
-    "Integrating",
-    "Calibrating",
-)
+_BRAILLE = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
 
 class ThinkingSpinner:
-    """Rich status spinner with phase updates and elapsed time.
+    """One TTY status line: braille + stable label + elapsed.
 
-    Modes (hint → status text):
-      thinking / empty → rotating verbs
-      turn N / tool name → tool-focused line
-    On exit the caller should print ``print_turn_footer`` (explicit done).
+    Flicker sources we avoid vs older Rich ``Console.status``:
+      - no rotating Thinking/Reasoning/Planning verbs
+      - no ``update()`` on every reasoning token
+      - pause/resume only clears the status line around persistent prints
     """
 
     def __init__(self, label: str = "thinking", bot_name: str = "rbp-agent") -> None:
-        self._label = label
-        self._hint = ""
+        del label
         self._bot = bot_name
-        self._pause_cm: Any = None
-        self._enabled = sys.stderr.isatty() and not os.environ.get("RBP_NO_SPINNER")
-        self._inner: Any = None
-        self._console: Any = None
+        self._hint = "Thinking"
+        self._enabled = bool(sys.stderr.isatty()) and not (
+            os.environ.get("RBP_NO_SPINNER", "").strip().lower() in ("1", "true", "yes")
+        )
+        self._stream: TextIO = sys.stderr
+        self._s = Style(self._stream)
         self._t0 = time.perf_counter()
-        self._verb_i = 0
-        if self._enabled:
-            try:
-                from rich.console import Console
-
-                self._console = Console(file=sys.stderr, force_terminal=True)
-                self._inner = self._console.status(
-                    self._status_text(),
-                    spinner="dots",
-                    spinner_style="cyan",
-                )
-            except Exception:
-                self._enabled = False
-
-    def _elapsed(self) -> str:
-        return f"{max(0.0, time.perf_counter() - self._t0):.0f}s"
-
-    def _status_text(self) -> str:
-        hint = (self._hint or "").strip()
-        if hint.startswith("turn "):
-            return f"[cyan]✶[/cyan] [dim]{self._bot}[/dim]  {hint}  ·  {self._elapsed()}"
-        if hint and hint not in ("thinking", "responding"):
-            return (
-                f"[yellow]✶[/yellow] [bold]{hint}[/bold]  ·  "
-                f"[dim]{self._elapsed()}[/dim]"
-            )
-        verb = _SPINNER_VERBS[self._verb_i % len(_SPINNER_VERBS)]
-        self._verb_i += 1
-        return f"[cyan]✶[/cyan] [dim]{verb}…[/dim]  ·  {self._elapsed()}"
-
-    def update(self, hint: str) -> None:
-        self._hint = (hint or "").strip()[:48]
-        if self._inner and self._enabled:
-            try:
-                self._inner.update(self._status_text())
-            except Exception:
-                pass
-
-    def pause(self) -> None:
-        if not self._inner or self._pause_cm is not None:
-            return
-        from contextlib import contextmanager
-
-        @contextmanager
-        def _ctx():
-            if self._inner:
-                self._inner.stop()
-                try:
-                    self._console.file.write("\r\x1b[2K")
-                    self._console.file.flush()
-                except Exception:
-                    pass
-            try:
-                yield
-            finally:
-                if self._inner and self._enabled:
-                    self._inner.update(self._status_text())
-                    self._inner.start()
-
-        self._pause_cm = _ctx()
-        self._pause_cm.__enter__()
-
-    def resume(self) -> None:
-        if self._pause_cm is None:
-            return
-        self._pause_cm.__exit__(None, None, None)
+        self._frame = 0
+        self._stop = None
+        self._thread = None
+        self._active = False
+        self._paused = False
+        self._lock = __import__("threading").Lock()
+        # Rich-compat no-ops (older code paths)
+        self._inner = None
+        self._console = None
         self._pause_cm = None
 
     def elapsed(self) -> float:
         return max(0.0, time.perf_counter() - self._t0)
 
+    def _status_text(self) -> str:
+        """Plain status label (tests + paint)."""
+        hint = (self._hint or "").strip() or "Thinking"
+        if hint in ("thinking", "responding"):
+            hint = "Thinking"
+        if hint.startswith("turn "):
+            return f"{self._bot}  {hint}  ·  {self.elapsed():.0f}s"
+        return f"{hint}  ·  {self.elapsed():.0f}s"
+
+    def update(self, hint: str) -> None:
+        """Change label only when it actually changes (no thrash)."""
+        raw = (hint or "").strip()[:48]
+        if raw in ("", "thinking", "responding"):
+            nxt = "Thinking"
+        elif raw.startswith("turn "):
+            nxt = raw
+        else:
+            nxt = raw
+        with self._lock:
+            if nxt == self._hint:
+                return
+            self._hint = nxt
+
+    def _paint(self) -> None:
+        if self._paused or not self._active or not self._enabled:
+            return
+        sp = _BRAILLE[self._frame % len(_BRAILLE)]
+        self._frame += 1
+        line = (
+            f"\r\x1b[2K  {self._s.cyan(sp)} "
+            f"{self._s.dim(self._status_text())}"
+        )
+        try:
+            self._stream.write(line)
+            self._stream.flush()
+        except Exception:
+            pass
+
+    def _loop(self) -> None:
+        # ~5 fps — smooth enough, far less thrash than Rich status + verb spin
+        while self._stop is not None and not self._stop.wait(0.2):
+            self._paint()
+
+    def _clear_line(self) -> None:
+        if not self._enabled:
+            return
+        try:
+            self._stream.write("\r\x1b[2K")
+            self._stream.flush()
+        except Exception:
+            pass
+
+    def start(self) -> None:
+        if not self._enabled or self._active:
+            return
+        import threading
+
+        self._frame = 0
+        if not getattr(self, "_clock_started", False):
+            self._t0 = time.perf_counter()
+            self._clock_started = True
+        self._hint = "Thinking"
+        self._stop = threading.Event()
+        self._active = True
+        self._paused = False
+        self._thread = threading.Thread(target=self._loop, name="rbp-spin", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        if self._stop is not None:
+            self._stop.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=0.5)
+        self._thread = None
+        self._stop = None
+        self._active = False
+        self._paused = False
+        self._clear_line()
+
+    def pause(self) -> None:
+        """Freeze paint so scrollback lines do not fight the status row."""
+        if not self._active:
+            return
+        self._paused = True
+        self._clear_line()
+
+    def resume(self) -> None:
+        if self._active:
+            self._paused = False
+
     def __enter__(self) -> "ThinkingSpinner":
-        self._t0 = time.perf_counter()
-        if self._inner:
-            self._inner.start()
+        self._clock_started = False
+        self.start()
         return self
 
     def __exit__(self, *exc: Any) -> None:
-        self.resume()
-        if self._inner:
-            try:
-                self._inner.stop()
-                self._console.file.write("\r\x1b[2K")
-                self._console.file.flush()
-            except Exception:
-                pass
+        self.stop()
+        self._clock_started = False
         return None
 
 
@@ -621,13 +641,15 @@ def make_agent_trace_hook(
             self._thought_folded = False
             self._tools_this_run: list[str] = []
             self._step = 0
+            self._journal = False  # True while printing tool lines (spinner stopped)
 
         def _out(self, line: str) -> None:
-            if spinner:
+            # During tool journal the spinner is stopped — no pause/resume thrash.
+            if spinner and spinner._active and not self._journal:
                 spinner.pause()
             stream.write(line + "\n")
             stream.flush()
-            if spinner:
+            if spinner and spinner._active and not self._journal:
                 spinner.resume()
 
         def _thought_text(self) -> str:
@@ -689,26 +711,27 @@ def make_agent_trace_hook(
             self._thought_parts.clear()
             self._thought_folded = False
             self._thought_t0 = None
+            self._journal = False
             self._run_t0 = time.perf_counter()
+            if spinner and not spinner._active:
+                spinner.start()
             self._out(self._s.bold(self._s.cyan("✶ agent")) + self._s.dim("  working"))
 
         async def before_iteration(self, context: AgentHookContext) -> None:
             n = context.iteration + 1
-            if spinner:
-                spinner.update(f"turn {n}")
-            self._out(self._s.bold(f"── turn {n} ──"))
-            # New model turn may bring a new thought block
+            # Soft turn marker only; keep spinner label stable ("Thinking")
+            self._out(self._s.dim(f"── turn {n} ──"))
             self._thought_folded = False
+            if spinner and not spinner._active:
+                spinner.start()
 
         async def emit_reasoning(self, reasoning_content: str | None) -> None:
-            # Buffer only — never print per-token (that made the CLI ugly/slow).
+            # Buffer only — never touch spinner per token (that caused flicker).
             if not reasoning_content:
                 return
             if self._thought_t0 is None:
                 self._thought_t0 = time.perf_counter()
             self._thought_parts.append(reasoning_content)
-            if spinner:
-                spinner.update("thinking")
 
         async def emit_reasoning_end(self) -> None:
             self._fold_thought()
@@ -722,16 +745,22 @@ def make_agent_trace_hook(
                 self._thought_parts.append(thought)
             self._fold_thought()
 
+            # Stop spinner for the whole tool journal (no per-line pause/resume).
+            if spinner and spinner._active:
+                spinner.stop()
+            self._journal = True
+
             calls = list(context.tool_calls or [])
             if not calls:
+                self._journal = False
+                if spinner:
+                    spinner.start()
                 return
             self._out(self._s.dim("  tools"))
             for tc in calls:
                 self._step += 1
                 name = getattr(tc, "name", "?")
                 self._tools_this_run.append(name)
-                if spinner:
-                    spinner.update(name)
                 args = getattr(tc, "arguments", None) or {}
                 arg_s = ""
                 if show_args and isinstance(args, dict):
@@ -765,11 +794,15 @@ def make_agent_trace_hook(
                     f"  {self._s.dim(summary)}"
                 )
 
-            if spinner:
-                spinner.update("thinking")
+            self._journal = False
+            if spinner and not spinner._active:
+                spinner.start()
 
         async def after_run(self, context: AgentRunHookContext) -> None:
             self._fold_thought()
+            self._journal = False
+            if spinner and spinner._active:
+                spinner.stop()
             used = list(context.tools_used or self._tools_this_run)
             seen: list[str] = []
             for n in used:
@@ -798,6 +831,9 @@ def make_agent_trace_hook(
 
         async def on_error(self, context: AgentRunHookContext) -> None:
             self._fold_thought()
+            self._journal = False
+            if spinner and spinner._active:
+                spinner.stop()
             err = context.error or (
                 type(context.exception).__name__ if context.exception else "error"
             )

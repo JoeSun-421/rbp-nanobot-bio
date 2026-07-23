@@ -38,6 +38,13 @@ from rbp_eval.loo_eval import (
     load_transfer_matrix,
     _paths,
 )
+from rbp_eval.metrics import (
+    average_precision,
+    binary_from_four_level,
+    expected_calibration_error,
+    metrics_from_pairs,
+    roc_auc,
+)
 
 DEFAULT_OUT = REPORTS / "evaluation_plan_report.json"
 DEFAULT_MD = REPORTS / "evaluation_plan_report.md"
@@ -127,109 +134,16 @@ def strata_bucket_schema() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Metrics (instance-level when (score, y) available)
+# Metrics (instance-level when (score, y) available) — shared via rbp_eval.metrics
 # ---------------------------------------------------------------------------
 
-def _roc_auc(scores: list[float], labels: list[int]) -> Optional[float]:
-    """Mann–Whitney AUROC; None if single class."""
-    pos = [s for s, y in zip(scores, labels) if y == 1]
-    neg = [s for s, y in zip(scores, labels) if y == 0]
-    if not pos or not neg:
-        return None
-    # rank-sum
-    pairs = 0
-    wins = 0.0
-    for p in pos:
-        for n in neg:
-            pairs += 1
-            if p > n:
-                wins += 1.0
-            elif p == n:
-                wins += 0.5
-    return wins / pairs if pairs else None
+# Canonical implementations live in :mod:`rbp_eval.metrics` (B4 unification).
+# This module imports: roc_auc, average_precision, expected_calibration_error,
+# binary_from_four_level, metrics_from_pairs — and re-exports them here for
+# backwards-compatible callers (``from rbp_eval.evaluation_plan import ...``).
+_roc_auc = roc_auc
+_average_precision = average_precision
 
-
-def _average_precision(scores: list[float], labels: list[int]) -> Optional[float]:
-    """AUPRC via ranked precision average."""
-    if not scores or sum(labels) == 0:
-        return None
-    order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-    tp = 0
-    fp = 0
-    ap_sum = 0.0
-    n_pos = sum(labels)
-    for rank, i in enumerate(order, start=1):
-        if labels[i] == 1:
-            tp += 1
-            ap_sum += tp / rank
-        else:
-            fp += 1
-    return ap_sum / n_pos if n_pos else None
-
-
-def expected_calibration_error(
-    scores: list[float],
-    labels: list[int],
-    *,
-    n_bins: int = 10,
-) -> Optional[float]:
-    """ECE on ˆp ∈ [0,1] vs binary y."""
-    if len(scores) < 2 or not any(labels) or not any(1 - y for y in labels):
-        # still compute if only one class? standard ECE needs both — return None
-        if len(scores) < n_bins:
-            return None
-    bins: list[list[tuple[float, int]]] = [[] for _ in range(n_bins)]
-    for s, y in zip(scores, labels):
-        s = max(0.0, min(1.0, float(s)))
-        b = min(n_bins - 1, int(s * n_bins))
-        bins[b].append((s, int(y)))
-    ece = 0.0
-    n = len(scores)
-    for bucket in bins:
-        if not bucket:
-            continue
-        conf = sum(s for s, _ in bucket) / len(bucket)
-        acc = sum(y for _, y in bucket) / len(bucket)
-        ece += (len(bucket) / n) * abs(acc - conf)
-    return ece
-
-
-def binary_from_four_level(label: str) -> int:
-    """Collapse Strong|Likely → 1, Unlikely|No → 0."""
-    return 1 if label in ("Strong", "Likely") else 0
-
-
-def metrics_from_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
-    """pairs: [{p_hat|score, y, label?}, ...]."""
-    scores: list[float] = []
-    labels: list[int] = []
-    for p in pairs:
-        if p.get("p_hat") is None and p.get("score") is None:
-            continue
-        s = float(p.get("p_hat") if p.get("p_hat") is not None else p["score"])
-        if p.get("y") is not None:
-            y = int(p["y"])
-        elif p.get("label"):
-            y = binary_from_four_level(str(p["label"]))
-        else:
-            continue
-        scores.append(s)
-        labels.append(y)
-    if len(scores) < 5:
-        return {
-            "status": "skipped",
-            "reason": "need ≥5 labeled (score,y) pairs",
-            "n": len(scores),
-        }
-    return {
-        "status": "ok",
-        "n": len(scores),
-        "n_pos": sum(labels),
-        "n_neg": len(labels) - sum(labels),
-        "auroc": _roc_auc(scores, labels),
-        "auprc": _average_precision(scores, labels),
-        "ece": expected_calibration_error(scores, labels),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -437,13 +351,27 @@ def run_light_evaluation_plan(
         }
 
     # (ii) fixed-weight (fuse) vs mean-view — already in domain_only_fuse vs domain_only_mean
-    # (iii) Stage 3 LLM removed — light protocol is numeric CSV lookup only
+    # (iii) Stage 3 LLM-explanation ablation (A4): the light protocol is numeric-only,
+    # but when (p_hat, y) pairs are available the harness can compare the full agent
+    # path (with Stage-3 LLM explanation) vs the de-LLM-explanation path (verdict from
+    # similarity_weighted_vote.score alone) using the SAME metrics. The no-LLM verdict
+    # is the weighted-vote score; the full-LLM verdict is supplied via --labels-llm.
     stage3 = {
         "mode": "numeric_only",
         "note": (
             "Light Evaluation Plan uses measured LOO transfer AUPRC/AUROC "
             "(no Stage-3 LLM explanation). LLM Stage-3 is agent-path only."
         ),
+        "ablation_no_llm_explanation": {
+            "status": "skipped",
+            "reason": (
+                "Needs (p_hat, y) pairs: pass --labels (no-LLM verdicts from "
+                "similarity_weighted_vote.score) and optionally --labels-llm "
+                "(full-path verdicts with Stage-3 LLM explanation)."
+            ),
+            "no_llm": None,
+            "full_llm": None,
+        },
     }
 
     # Primary metrics: transfer-level summary from default ablation (domain, n_cand=5)
@@ -696,9 +624,28 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="JSON list of {p_hat,y} for instance AUROC/AUPRC/ECE",
     )
     ap.add_argument(
+        "--labels-llm",
+        type=Path,
+        default=None,
+        help=(
+            "JSON list of {p_hat,y} from the FULL agent path (with Stage-3 LLM "
+            "explanation). Used by --no-llm-explanation to compare against the "
+            "de-LLM verdicts supplied via --labels."
+        ),
+    )
+    ap.add_argument(
+        "--no-llm-explanation",
+        action="store_true",
+        help=(
+            "A4: record the Stage-3 de-LLM-explanation ablation. Requires --labels "
+            "(no-LLM verdicts from similarity_weighted_vote.score); optionally "
+            "--labels-llm (full-path verdicts) for the contrast."
+        ),
+    )
+    ap.add_argument(
         "--heavy",
         action="store_true",
-        help="Attempt RhoBind subsample (requires ≥8 GiB); otherwise skip",
+        help="Attempt RhoBind subsample (requires ≥8 GiB); otherwise skip",
     )
     args = ap.parse_args(argv)
 
@@ -707,6 +654,48 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.labels and Path(args.labels).is_file():
         attach_instance_metrics(report, Path(args.labels))
+
+    # A4: Stage-3 de-LLM-explanation ablation.
+    if args.no_llm_explanation:
+        abl = report["stage3"].setdefault("ablation_no_llm_explanation", {})
+        if args.labels and Path(args.labels).is_file():
+            no_llm_pairs = json.loads(Path(args.labels).read_text(encoding="utf-8"))
+            if isinstance(no_llm_pairs, dict):
+                no_llm_pairs = no_llm_pairs.get("scored_labels") or no_llm_pairs.get("pairs") or []
+            abl["no_llm"] = metrics_from_pairs(list(no_llm_pairs))
+            abl["no_llm"]["source"] = str(args.labels)
+            if args.labels_llm and Path(args.labels_llm).is_file():
+                llm_pairs = json.loads(Path(args.labels_llm).read_text(encoding="utf-8"))
+                if isinstance(llm_pairs, dict):
+                    llm_pairs = llm_pairs.get("scored_labels") or llm_pairs.get("pairs") or []
+                abl["full_llm"] = metrics_from_pairs(list(llm_pairs))
+                abl["full_llm"]["source"] = str(args.labels_llm)
+                abl["status"] = "ok"
+                abl["reason"] = None
+                # Delta summary (positive = no-LLM path is better)
+                nl = abl["no_llm"]
+                fl = abl["full_llm"]
+                abl["delta_auroc"] = (
+                    (nl.get("auroc") or 0) - (fl.get("auroc") or 0)
+                    if nl.get("status") == "ok" and fl.get("status") == "ok"
+                    else None
+                )
+                abl["delta_auprc"] = (
+                    (nl.get("auprc") or 0) - (fl.get("auprc") or 0)
+                    if nl.get("status") == "ok" and fl.get("status") == "ok"
+                    else None
+                )
+                abl["delta_ece"] = (
+                    (nl.get("ece") or 0) - (fl.get("ece") or 0)
+                    if nl.get("status") == "ok" and fl.get("status") == "ok"
+                    else None
+                )
+            else:
+                abl["status"] = "ok"
+                abl["reason"] = "no-LLM path only (no --labels-llm contrast supplied)"
+        else:
+            abl["status"] = "skipped"
+            abl["reason"] = "--no-llm-explanation requires --labels (no-LLM verdicts)"
 
     if args.heavy:
         report["heavy"] = {

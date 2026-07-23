@@ -32,6 +32,7 @@ from app.core.paths import (
 DEFAULT_CONFIG = PACKAGE_ROOT / "config" / "defaults.yaml"
 EVOLVED_CONFIG = PACKAGE_ROOT / "config" / "evolved.yaml"
 CANDIDATE_CONFIG = PACKAGE_ROOT / "config" / "evolved.candidate.yaml"
+CANDIDATE_SEED = PACKAGE_ROOT / "config" / "evolved.candidate.yaml.example"
 EVOLVED_REPORT = DEFAULT_EVOLVE_REPORT
 ensure_artifact_dirs()
 
@@ -846,17 +847,30 @@ def promote_evolved_config(
     candidate: Path = CANDIDATE_CONFIG,
     live: Path = EVOLVED_CONFIG,
     require_reports: bool = True,
+    seed: bool = False,
 ) -> Path:
     """Promote candidate → live evolved.yaml after light eval report asserts.
 
     Mirrors DSPy/Haystack: offline compile, then gate, then deploy policy.
+
+    C6: when ``seed=True`` and the candidate file is missing (e.g. fresh clone —
+    ``evolved.candidate.yaml`` is gitignored), copy the tracked seed
+    ``evolved.candidate.yaml.example`` → candidate first so the promote link is
+    reproducible without running the full ``evolve`` loop.
     """
     if not candidate.is_file():
-        raise FileNotFoundError(
-            f"No candidate config at {candidate}. Run: rbp-agent evolve"
-        )
+        if seed and CANDIDATE_SEED.is_file():
+            import shutil
+
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(CANDIDATE_SEED, candidate)
+        else:
+            raise FileNotFoundError(
+                f"No candidate config at {candidate}. Run: rbp-agent evolve"
+                + ("" if seed else "  (or `rbp-agent promote-evolved --seed` to bootstrap)")
+            )
     if require_reports:
-        from app.acceptance.gate import assert_eval_plan_report, assert_loo_report
+        from app.dev.gate import assert_eval_plan_report, assert_loo_report
         from app.core.paths import REPORTS
 
         loo = REPORTS / "eval_loo_report.json"

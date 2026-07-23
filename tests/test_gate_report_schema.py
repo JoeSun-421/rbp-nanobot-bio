@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from app.acceptance.gate import assert_eval_plan_report, assert_loo_report
+from app.dev.gate import assert_eval_plan_report, assert_loo_report
 
 
 def test_assert_loo_report_schema(tmp_path: Path):

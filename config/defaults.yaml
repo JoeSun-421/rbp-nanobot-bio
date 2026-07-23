@@ -16,12 +16,13 @@ axes:
   embedding: true
   sequence: true
   domain: true
-  structure: false
+  structure: true
+  # AF3 optional; prefer AFDB (structure_policy). Keep false until AF3 env probe is green.
   use_af3: false
   function_annotation: true
-  rna_blastn: false
+  rna_blastn: true
   struct_align_refine: true
-  literature: false
+  literature: true
 
 fusion_weights:
   esmc_cosine: 1.0
@@ -60,6 +61,7 @@ integrate:
   use_abstain: true
 
 predict:
+  # Product default: max over donor heads. Weighted mean is an evolve candidate (see proposal §4).
   aggregate: max
 
 structure_policy:

@@ -12,8 +12,8 @@ if str(ROOT) not in sys.path:
 
 
 def test_layout_proposal_paths():
-    assert (ROOT / "plugin" / "nanobot" / "agent" / "tools" / "rbp" / "predict.py").is_file()
-    assert (ROOT / "plugin" / "nanobot" / "skills" / "rbp-agent" / "SKILL.md").is_file()
+    assert (ROOT / "nanobot" / "agent" / "tools" / "rbp" / "predict.py").is_file()
+    assert (ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md").is_file()
     assert (ROOT / "rbp_eval" / "runner.py").is_file()
     assert (ROOT / "rbp_eval" / "evaluator.py").is_file()
     assert (ROOT / "rbp_eval" / "fuse_hits.py").is_file()

@@ -42,5 +42,23 @@ if ((hits > 0)); then
   echo "check_secrets: FAIL ($hits file hits). Rotate keys; do not commit .env / ~/.nanobot/config.json" >&2
   exit 1
 fi
+
+# Reminder: ~/.nanobot/config.json holds the live LLM key (outside the repo).
+# We do not read it; just nudge if it is missing the 0600 perm or is world-readable.
+CFG="${NANOBOT_CONFIG:-$HOME/.nanobot/config.json}"
+if [[ -f "$CFG" ]]; then
+  perm=$(stat -c '%a' "$CFG" 2>/dev/null || stat -f '%Lp' "$CFG" 2>/dev/null || echo "???")
+  if [[ "$perm" != "600" && "$perm" != "400" ]]; then
+    echo "check_secrets: WARN  $CFG perms=$perm (recommend chmod 600). Not a tracked-file failure." >&2
+  fi
+  # Guard against accidental `git add -f ~/.nanobot/config.json` inside any repo
+  if git -C "$HOME" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if git -C "$HOME" ls-files --error-unmatch "$CFG" >/dev/null 2>&1; then
+      echo "check_secrets: FAIL  $CFG is TRACKED by a git repo at $HOME — untrack + rotate key." >&2
+      exit 1
+    fi
+  fi
+fi
+
 echo "check_secrets: OK (${#FILES[@]} files scanned)"
 exit 0

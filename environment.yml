@@ -1,0 +1,43 @@
+# nanobot-bio — app environment (conda/mamba)
+# =============================================================================
+# Creates a conda env that can run `nanobot-bio doctor` / `chat` / `gate`
+# (agent layer only). Science tools (ESM, mmseqs, rhobind, AF3) live in
+# separate delivery envs — see ../rhobind_agent_delivery/agent/envs/.
+#
+# Usage:
+#   mamba env create -f environment.yml
+#   mamba activate nanobot-bio
+#   pip install -e ".[dev]"          # editable app + dev extras
+#   # then point NANOBOT_SRC at a sibling nanobot runtime (see INSTALL.md)
+#   nanobot-bio doctor
+#
+# This file mirrors [project.dependencies] in pyproject.toml + the dev extras.
+# Keep it in sync when pyproject.toml changes. requirements.lock is the
+# authoritative pin file for reproducible installs (pip path).
+# =============================================================================
+name: nanobot-bio
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10,<3.14
+  - pip>=24
+  # Runtime (mirrors pyproject.toml [project.dependencies])
+  - pyyaml>=6.0
+  - pydantic>=2.0
+  - numpy>=1.24
+  - loguru>=0.7
+  - typer>=0.12
+  - rich>=13
+  - questionary>=2
+  - prompt_toolkit>=3.0
+  - openai>=1.0
+  # dulwich is on conda-forge but pip fallback is fine; keep pip section for parity
+  - pip:
+      - dulwich>=0.21
+      # Dev extras (mirrors pyproject.toml [project.optional-dependencies].dev)
+      - pytest>=7.0
+      - pytest-cov>=4.0
+      - ruff>=0.6
+      # Editable install of the app itself (run after env create):
+      #   pip install -e ".[dev]"
+      # (Not listed here to avoid path issues; do it manually post-create.)

@@ -228,6 +228,32 @@ class DeliveryBackedTool(Tool):
     def read_only(self) -> bool:
         return self._read_only
 
+    # F1/B3: surface delivery-backed axis soft-fails as turn-state evidence flags
+    # so they reach verdict caveats via normalize_verdict_with_turn_state.
+    @staticmethod
+    def _add_evidence_flag(key: str, value: Any = True) -> None:
+        try:
+            from nanobot.agent.tools.rbp.turn_guards import add_evidence_flag
+
+            add_evidence_flag(key, value)
+        except Exception:
+            pass
+
+    def _surface_axis_softfail(self, out: dict[str, Any]) -> None:
+        """Map a delivery tool error envelope to an axis-unavailable evidence flag."""
+        name = self._delivery_name
+        err = str(out.get("error") or out.get("reason") or "").lower()
+        if name == "structure_fetch":
+            # AFDB miss / fetch error → structure axis unavailable for this RBP.
+            self._add_evidence_flag("structure_axis_unavailable", True)
+        elif name == "literature_retrieval" or name == "literature_search":
+            self._add_evidence_flag("literature_unavailable", True)
+        elif name == "domain_architecture":
+            self._add_evidence_flag("domain_empty", True)
+        # mmseqs segfault surfacing is handled in seq_similarity; keep generic.
+        if "segfault" in err or "segv" in err:
+            self._add_evidence_flag("mmseqs_segfall", True)
+
     async def execute(self, **kwargs: Any) -> str:
         try:
             from nanobot.agent.tools.rbp.turn_guards import retrieve_blocked_reason
@@ -237,6 +263,40 @@ class DeliveryBackedTool(Tool):
                 return _dumps(_envelope_err(blocked))
         except Exception:
             pass
+        # A1: local structure file input modality — skip delivery resolve, hand
+        # pdb_path straight to struct_similarity (no AFDB fetch needed).
+        if self._delivery_name == "resolve_rbp" and kwargs.get("structure_file"):
+            from nanobot.agent.tools.rbp.common import resolve_structure_file
+
+            pdb_path, err_reason = resolve_structure_file(str(kwargs["structure_file"]))
+            if err_reason:
+                return _dumps(_envelope_err(err_reason))
+            return _dumps(
+                {
+                    "status": "ok",
+                    "value": {
+                        "matched": False,
+                        "in_panel": False,
+                        "structure_file": str(pdb_path),
+                        "pdb_path": str(pdb_path),
+                        "source": "structure_file",
+                        "hint": (
+                            "Custom structure supplied. Skip AFDB fetch; call "
+                            "struct_similarity(pdb_path=...) directly. Sequence "
+                            "axis may be unavailable — abstain if needed."
+                        ),
+                    },
+                }
+            )
+        if self._delivery_name == "confidence_abstain":
+            try:
+                from nanobot.agent.tools.rbp.turn_guards import abstain_blocked_reason
+
+                blocked_abs = abstain_blocked_reason()
+                if blocked_abs:
+                    return _dumps(_envelope_err(blocked_abs))
+            except Exception:
+                pass
         payload = {k: v for k, v in kwargs.items() if v is not None}
         payload = _normalize_delivery_payload(self._delivery_name, payload)
 
@@ -252,6 +312,9 @@ class DeliveryBackedTool(Tool):
         if out.get("skipped") or (
             out.get("ok") is False and out.get("error")
         ):
+            # F1/B3: surface delivery-backed soft-fails as evidence flags so they
+            # reach verdict caveats (normalize_verdict_with_turn_state consumes them).
+            self._surface_axis_softfail(out)
             return _dumps(
                 _envelope_err(out.get("error") or out.get("reason") or "tool failed", ms)
             )
@@ -294,6 +357,8 @@ class DeliveryBackedTool(Tool):
                 "No registry Pfam for this RBP. Re-call with network=true "
                 "(and sequence is auto-filled from catalogue) for InterProScan — slow."
             )
+            # F1/B3: domain axis empty for this (unseen) RBP → surface as caveat.
+            self._add_evidence_flag("domain_empty", True)
         env = _envelope_ok(clean, ms)
         env["_meta"] = {
             "delivery_tool": self._delivery_name,
@@ -386,6 +451,17 @@ def build_delivery_raw_tools(
                 " Prefer alias/uniprot for known RBPs (fast registry). "
                 "For novel sequences, domains=[] unless network=true "
                 "(InterProScan REST — minutes). Never pass RNA as sequence."
+            )
+        elif name == "resolve_rbp":
+            # A1: accept a local PDB/CIF structure file as an RBP input modality.
+            # When provided, the wrapper skips the delivery call and returns
+            # pdb_path directly for struct_similarity (skip AFDB fetch).
+            props = params.setdefault("properties", {})
+            props.setdefault("structure_file", {"type": "string"})
+            desc += (
+                " Optional structure_file (absolute path to .pdb/.cif) supplies a "
+                "custom/predicted structure directly — skips AFDB fetch and "
+                "forwards pdb_path to struct_similarity."
             )
         tools.append(
             DeliveryBackedTool(

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Locate plugin SoT (skills + tools/rbp) for overlay sync.
+"""Locate toolkit SoT (skills + tools/rbp) for overlay sync.
 
-Single source of truth: ``plugin/nanobot/`` under ``NANOBOT_BIO_ROOT``.
+Single source of truth: ``nanobot/`` under ``NANOBOT_BIO_ROOT``
+(Proposal §6.2 layout; synced into ``$NANOBOT_SRC``).
 """
 
 from __future__ import annotations
@@ -15,7 +16,17 @@ def sot_root() -> Path:
     bio = Path(
         os.environ.get("NANOBOT_BIO_ROOT", Path(__file__).resolve().parents[1])
     ).expanduser().resolve()
-    return bio / "plugin" / "nanobot"
+    preferred = bio / "nanobot"
+    skill = preferred / "skills" / "rbp-agent" / "SKILL.md"
+    legacy = bio / "plugin" / "nanobot"
+    if skill.is_file():
+        return preferred.resolve()
+    if (legacy / "skills" / "rbp-agent" / "SKILL.md").is_file():
+        raise FileNotFoundError(
+            f"Legacy SoT found at {legacy}; move it to {preferred} "
+            "(repo-root nanobot/). plugin/nanobot is no longer supported."
+        )
+    raise FileNotFoundError(f"Missing SoT skill at {skill}")
 
 
 def skill_md() -> Path:

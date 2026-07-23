@@ -15,7 +15,7 @@ def test_skill_always_on_and_own_head_playbook(tmp_path):
     from app.integrate import ensure_workspace_skill
     from nanobot.agent.skills import SkillsLoader
 
-    skill = ROOT / "plugin" / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
+    skill = ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
     text = skill.read_text(encoding="utf-8")
     assert text.startswith("---")
     assert "always: true" in text
@@ -24,7 +24,7 @@ def test_skill_always_on_and_own_head_playbook(tmp_path):
     assert "STOP" in text
 
     ensure_workspace_skill(tmp_path)
-    loader = SkillsLoader(tmp_path, builtin_skills_dir=ROOT / "plugin" / "nanobot" / "skills")
+    loader = SkillsLoader(tmp_path, builtin_skills_dir=ROOT / "nanobot" / "skills")
     always = loader.get_always_skills()
     assert "rbp-agent" in always
 
