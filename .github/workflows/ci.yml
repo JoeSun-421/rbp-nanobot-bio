@@ -22,11 +22,26 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install App (lock + editable dev)
+      - name: Checkout Nanobot runtime
+        uses: actions/checkout@v4
+        with:
+          repository: HKUDS/nanobot
+          path: _runtime_nanobot
+          fetch-depth: 1
+
+      - name: Install App + Nanobot runtime + sync RBP overlay
+        env:
+          NANOBOT_BIO_ROOT: ${{ github.workspace }}
+          NANOBOT_SRC: ${{ github.workspace }}/_runtime_nanobot
         run: |
           python -m pip install -U pip setuptools wheel
           pip install -r requirements.lock
           pip install -e ".[dev]"
+          # Install the nanobot runtime (provides nanobot.agent.tools.base etc.)
+          pip install -e "$NANOBOT_SRC"
+          # Mirror the SoT RBP tool overlay into the imported nanobot package so
+          # pytest can import nanobot.agent.tools.rbp.* (turn_guards, stage_contract, …)
+          python -m app.sync_overlay
 
       - name: Secret scan
         run: bash scripts/check_secrets.sh
@@ -36,13 +51,6 @@ jobs:
 
       - name: Pytest
         run: pytest -q
-
-      - name: Checkout Nanobot runtime (for layout)
-        uses: actions/checkout@v4
-        with:
-          repository: HKUDS/nanobot
-          path: _runtime_nanobot
-          fetch-depth: 1
 
       - name: Layout (SoT + Runtime import)
         env:
@@ -54,8 +62,6 @@ jobs:
           ln -sfn "$NANOBOT_SRC" "$BIO_ROOT/nanobot"
           ln -sfn "$GITHUB_WORKSPACE" "$BIO_ROOT/nanobot-bio"
           export PYTHONPATH="$BIO_ROOT:$GITHUB_WORKSPACE${PYTHONPATH:+:$PYTHONPATH}"
-          pip install -e "$NANOBOT_SRC" || true
-          export PYTHONPATH="$NANOBOT_SRC:$PYTHONPATH"
           rbp-agent layout
 
       - name: Note — own-head / light eval skipped on public CI
