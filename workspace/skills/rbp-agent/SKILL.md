@@ -1,1 +1,1 @@
-/root/autodl-tmp/bio_agent/nanobot-bio/nanobot/skills/rbp-agent/SKILL.md
+../../../nanobot/skills/rbp-agent/SKILL.md

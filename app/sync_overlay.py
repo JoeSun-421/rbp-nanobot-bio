@@ -47,6 +47,18 @@ def _same_tree(src: Path, dst: Path) -> bool:
     return _tree_sig(src) == _tree_sig(dst) and _tree_sig(src) != ""
 
 
+def _rel_link_target(src: Path, dst_file: Path) -> str:
+    """Return a *relative* symlink target for ``src`` from the dir of ``dst_file``.
+
+    Relative (not absolute) so the committed symlink is portable across hosts
+    (an absolute ``/root/...`` path is unreadable on CI runners and breaks
+    ``os.stat`` with PermissionError). Computed from ``dst_file``'s *lexical*
+    parent dir (not the resolved target) so it works before the link exists."""
+    import posixpath
+
+    return posixpath.relpath(src.resolve(), start=dst_file.parent.resolve())
+
+
 def _mirror_tools_to_imported(src_rbp: Path, dst_rbp: Path, log) -> None:
     """Best-effort: mirror the rbp overlay into the *imported* nanobot package.
 
@@ -138,38 +150,53 @@ def sync_overlay(*, quiet: bool = False) -> int:
     src_skill_dir = src_skill.parent
 
     def _link_or_copy_skill(dst_file: Path) -> str:
-        """Prefer symlink to SoT skill; fall back to copy2."""
+        """Prefer a *relative* symlink to the SoT skill; fall back to copy2.
+
+        Relative (not absolute) so the symlink is portable across machines /
+        CI runners (an absolute path like ``/root/...`` is unreadable on other
+        hosts and breaks ``os.stat`` with PermissionError)."""
         dst_file.parent.mkdir(parents=True, exist_ok=True)
-        if dst_file.is_symlink() or dst_file.exists():
+        if dst_file.is_symlink():
             try:
-                if dst_file.resolve() == src_skill.resolve():
+                if os.readlink(dst_file) == _rel_link_target(src_skill, dst_file):
                     return "symlink-fresh"
             except Exception:
                 pass
             dst_file.unlink()
+        elif dst_file.exists():
+            try:
+                if dst_file.resolve() == src_skill.resolve():
+                    return "copy-fresh"
+            except Exception:
+                pass
+            dst_file.unlink()
         try:
-            os.symlink(src_skill.resolve(), dst_file)
+            os.symlink(_rel_link_target(src_skill, dst_file), dst_file)
             return "symlink"
         except OSError:
             shutil.copy2(src_skill, dst_file)
             return "copy"
 
     tools_fresh = _same_tree(src_rbp, dst_rbp)
-    skill_ws_ok = (
-        dest_skill.is_file()
-        or dest_skill.is_symlink()
-    ) and (
-        dest_skill.resolve() == src_skill.resolve()
-        if dest_skill.exists() or dest_skill.is_symlink()
-        else False
-    )
-    skill_rt_ok = (
-        runtime_skill.is_file() or runtime_skill.is_symlink()
-    ) and (
-        runtime_skill.resolve() == src_skill.resolve()
-        if runtime_skill.exists() or runtime_skill.is_symlink()
-        else False
-    )
+
+    def _skill_ok(dst_file: Path) -> bool:
+        """True iff dst_file is a symlink/file already pointing at the SoT skill.
+
+        Robust to broken / permission-denied symlinks (e.g. an absolute
+        ``/root/...`` symlink committed from another host): ``os.stat`` on such
+        a target raises PermissionError, so we stat with ``follow_symlinks``
+        guarded and fall back to comparing the link text."""
+        try:
+            if dst_file.is_symlink():
+                return os.readlink(dst_file) == _rel_link_target(src_skill, dst_file)
+            if dst_file.is_file():
+                return dst_file.resolve() == src_skill.resolve()
+        except (OSError, ValueError):
+            return False
+        return False
+
+    skill_ws_ok = _skill_ok(dest_skill)
+    skill_rt_ok = _skill_ok(runtime_skill)
     if tools_fresh and skill_ws_ok and skill_rt_ok:
         # Still refresh references/ when present (progressive disclosure assets)
         src_refs = src_skill_dir / "references"
@@ -181,8 +208,10 @@ def sync_overlay(*, quiet: bool = False) -> int:
                     need = not _same_tree(src_refs, dest_refs)
                 elif dest_refs.is_symlink():
                     try:
-                        need = dest_refs.resolve() != src_refs.resolve()
-                    except Exception:
+                        need = os.readlink(dest_refs) != _rel_link_target(
+                            src_refs, dest_refs
+                        )
+                    except (OSError, ValueError):
                         need = True
                 if need:
                     if dest_refs.exists() or dest_refs.is_symlink():
@@ -191,7 +220,7 @@ def sync_overlay(*, quiet: bool = False) -> int:
                         else:
                             shutil.rmtree(dest_refs)
                     try:
-                        os.symlink(src_refs.resolve(), dest_refs)
+                        os.symlink(_rel_link_target(src_refs, dest_refs), dest_refs)
                     except OSError:
                         shutil.copytree(src_refs, dest_refs)
         marker = dest_skill_dir / "DO_NOT_EDIT.md"
@@ -243,13 +272,21 @@ def sync_overlay(*, quiet: bool = False) -> int:
     if src_refs.is_dir():
         for dest_dir in (dest_skill_dir, runtime_skill.parent):
             dest_refs = dest_dir / "references"
+            # Skip if already a correct relative symlink (portable across hosts).
+            try:
+                if dest_refs.is_symlink() and os.readlink(dest_refs) == _rel_link_target(
+                    src_refs, dest_refs
+                ):
+                    continue
+            except (OSError, ValueError):
+                pass
             if dest_refs.exists() or dest_refs.is_symlink():
                 if dest_refs.is_symlink() or dest_refs.is_file():
                     dest_refs.unlink()
                 else:
                     shutil.rmtree(dest_refs)
             try:
-                os.symlink(src_refs.resolve(), dest_refs)
+                os.symlink(_rel_link_target(src_refs, dest_refs), dest_refs)
                 _log(f"[sync_overlay] references symlink -> {dest_refs}")
             except OSError:
                 shutil.copytree(src_refs, dest_refs)
