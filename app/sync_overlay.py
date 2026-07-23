@@ -72,9 +72,13 @@ def _mirror_tools_to_imported(src_rbp: Path, dst_rbp: Path, log) -> None:
         import nanobot as _nb  # noqa: F401
 
         imported_rbp = Path(_nb.__file__).resolve().parent / "agent" / "tools" / "rbp"
-        if imported_rbp.resolve() == dst_rbp.resolve() or not imported_rbp.is_dir():
+        # Skip only when the imported location IS the NANOBOT_SRC destination
+        # (same path — editable install) to avoid a redundant self-copy. A
+        # missing rbp/ dir (e.g. a fresh PyPI wheel without the overlay) must NOT
+        # short-circuit: we create it below so pytest can import rbp.* .
+        if imported_rbp.resolve() == dst_rbp.resolve():
             return
-        if _same_tree(src_rbp, imported_rbp):
+        if imported_rbp.is_dir() and _same_tree(src_rbp, imported_rbp):
             log("[sync_overlay] tools (imported) skip-if-fresh")
             return
         if imported_rbp.exists():
