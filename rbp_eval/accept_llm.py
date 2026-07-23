@@ -15,7 +15,7 @@ def run_accept_llm(
     strict: bool = True,
 ) -> dict[str, Any]:
     from app.backends.delivery.examples import own_head_prompt
-    from app.core.paths import REPORTS, ensure_artifact_dirs
+    from app.core.paths import REPORTS, SESSIONS, ensure_artifact_dirs
     from app.integrate import RBPAgent
 
     ensure_artifact_dirs()
@@ -29,7 +29,18 @@ def run_accept_llm(
         "evidence": {},
     }
 
+    def _clear_session(case: str) -> None:
+        """Delete any persisted session for this case so the LLM exercises tools
+        fresh instead of short-circuiting on a cached prior verdict
+        (``ephemeral=True`` does not discard pre-existing session memory)."""
+        try:
+            for p in SESSIONS.glob(f"accept-llm_{case}*.jsonl"):
+                p.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     def _one(case: str, message: str, *, expect_stage1: bool) -> None:
+        _clear_session(case)
         try:
             result = agent.run_sync(
                 message,

@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.12"]
+        python-version: ["3.12", "3.13"]
 
     steps:
       - name: Checkout App
@@ -66,13 +66,15 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Science acceptance — runs on a self-hosted runner with delivery bundle +
-  # conda envs (GPU optional). Triggered on push to main and on tags.
+  # conda envs (GPU optional). Triggered on tags and manual dispatch only, so
+  # regular pushes/PRs stay green via the `test` job above (no runner → these
+  # jobs would queue indefinitely).
   # Add a self-hosted runner labeled `self-hosted, linux, science` and set the
   # repo secret DELIVERY_BUNDLE_PATH (absolute path to rhobind_agent_delivery
   # on the runner host) to enable.
   # ---------------------------------------------------------------------------
   science:
-    if: github.repository == 'JoeSun-421/rbp-nanobot-bio'
+    if: github.repository == 'JoeSun-421/rbp-nanobot-bio' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, linux, science]
     timeout-minutes: 60
     env:

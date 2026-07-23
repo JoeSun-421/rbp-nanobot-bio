@@ -1,6 +1,6 @@
 [project]
 name = "nanobot-bio"
-version = "0.5.0"
+version = "0.5.1"
 description = "RBP Agent App: nanobot-bio CLI + nanobot SoT + delivery bridge"
 readme = "README.md"
 requires-python = ">=3.10"

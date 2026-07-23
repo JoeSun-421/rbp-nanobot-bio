@@ -4,6 +4,18 @@ Changes to the RBP Agent application (`nanobot-bio`). Format: [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-07-24
+
+### Fixed
+
+- **CI matrix vs lock mismatch:** `requirements.lock` pins `numpy==2.5.1` (needs Python ≥3.12) but the matrix still tested `3.10` → install failed on the 3.10 slot. Matrix changed to `["3.12", "3.13"]` (matches the lock and local dev env).
+- **`science` job queued indefinitely with no runner:** the `science` (accept-golden) job ran on every push to main with `runs-on: [self-hosted, linux, science]`, but no runner is registered → it stayed queued forever and made every CI run look stuck. Gated `science` to tag/`workflow_dispatch` only (same as `eval`), so regular push/PR CI stays green via the `test` job alone.
+- **`accept-llm` short-circuited on cached session:** `ephemeral=True` did not discard pre-existing session memory, so the LLM reused a prior verdict ("unchanged from previous run") instead of calling tools → touchpoints failed. `accept_llm` now clears the `accept-llm:<case>` session files before each run, so the LLM exercises the full tool chain fresh. Verified: `accept-llm ok=True` with all four touchpoints hit (incl. the F3-required `get_func_annotation` + `literature_search`).
+
+### Changed
+
+- **INSTALL.md §4.1:** documents the three CI jobs, their runners/triggers, and how to register a `self-hosted, linux, science` runner + `DELIVERY_BUNDLE_PATH` secret to enable the `science`/`eval` jobs.
+
 ## [0.5.0] — 2026-07-23
 
 ### Added — functional gaps (delivery contract alignment)

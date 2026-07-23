@@ -1,7 +1,7 @@
 # nanobot-bio
 
 [![Python](https://img.shields.io/badge/python-%E2%89%A53.10-blue.svg)](https://www.python.org/)
-[![Release](https://img.shields.io/badge/release-v0.5.0-green.svg)](https://github.com/JoeSun-421/rbp-nanobot-bio/releases)
+[![Release](https://img.shields.io/badge/release-v0.5.1-green.svg)](https://github.com/JoeSun-421/rbp-nanobot-bio/releases)
 
 [English](README.md) | **中文**
 
