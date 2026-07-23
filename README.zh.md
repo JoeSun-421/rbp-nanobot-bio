@@ -93,7 +93,7 @@ nanobot-bio/
 
 默认（Table 3 / `config/defaults.yaml`）：`n_cand=5`，`tau_drop=0.30`，近同源 `0.95`，标签切分 `0.75/0.50/0.25`。
 
-**Axes 说明：** 默认 `structure` / `rna_blastn` / `literature` 为 **true**；`use_af3` 为 **false**（AFDB 优先，直至 AF3 探针绿）。
+**Axes 说明：** 默认 `structure` / `rna_blastn` / `literature` 为 **true**；无 AFDB 时 **AF3 回退开启**（`use_af3` / `use_af3_fallback`）；探针失败记 caveat，≠ sim `0`。供体聚合默认 `weighted`（提案 §4）。
 
 ---
 

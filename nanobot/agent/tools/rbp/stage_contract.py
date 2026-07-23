@@ -55,7 +55,9 @@ STAGE_RETRIEVE: frozenset[str] = frozenset(
 # Special sentinel "__any_retrieve__" means "at least one STAGE_RETRIEVE tool".
 REQUIRES: dict[str, tuple[str, ...]] = {
     "fuse_similarity_views": ("__any_retrieve__",),
-    "confidence_abstain": ("fuse_similarity_views",),
+    # Proposal §4 Checkpoint 1: LLM-calibrated proxies after deterministic fuse.
+    "commit_proxy_candidates": ("fuse_similarity_views",),
+    "confidence_abstain": ("commit_proxy_candidates",),
     "transfer_prior_lookup": ("fuse_similarity_views",),
     "donor_quality_prior": ("fuse_similarity_views",),
     "similarity_weighted_vote": ("confidence_abstain",),
@@ -69,6 +71,7 @@ OWN_HEAD_STOP_BLOCKED: frozenset[str] = frozenset(
     STAGE_RETRIEVE
     | {
         "fuse_similarity_views",
+        "commit_proxy_candidates",
         "transfer_prior_lookup",
         "donor_quality_prior",
         "similarity_weighted_vote",

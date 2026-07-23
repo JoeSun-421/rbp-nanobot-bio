@@ -4,6 +4,13 @@ Changes to the RBP Agent application (`nanobot-bio`). Format: [Keep a Changelog]
 
 ## [Unreleased]
 
+### Changed — proposal §4 fidelity
+
+- **LLM-calibrated Stage-1 fusion:** new `commit_proxy_candidates` tool; deterministic `fuse_similarity_views` is evidence only (with `{seq,struct,func}` breakdown). Stage contract: fuse → commit → abstain → predict.
+- **Default aggregation `weighted`:** product `p_hat = Σ s_i·p_i·c_i / Σ s_i·c_i` using committed LLM `s_i`; `c_i` defaults to 1.0. Predict rows stub `confidence=1.0` + `feature_attribution={}`.
+- **AF3 fallback default on:** `axes.use_af3=true`, `structure_policy.use_af3_fallback=true` (probe failure → caveat, ≠ sim 0).
+- **Docs synced to §4:** proposal Table 1/3, engineering guide, README, AGENTS.md.
+
 ## [0.5.1] — 2026-07-24
 
 ### Fixed

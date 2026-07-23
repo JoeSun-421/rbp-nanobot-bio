@@ -33,6 +33,34 @@ def _rank_normalize(scores: dict[str, float]) -> dict[str, float]:
     return out
 
 
+# Metric → proposal Stage-1 view buckets (evidence for LLM Checkpoint 1).
+_SEQ_METRICS = frozenset(
+    {"esmc_cosine", "esm2_cosine", "seq_identity", "pident", "phmmer_evalue"}
+)
+_STRUCT_METRICS = frozenset({"tm_score", "lddt", "fident", "alntmscore"})
+_FUNC_METRICS = frozenset(
+    {"domain_jaccard", "domain_overlap", "function_similarity"}
+)
+
+
+def proposal_breakdown(sim_by_modality: dict[str, Any]) -> dict[str, float]:
+    """Collapse per-metric scores into proposal ``{seq, struct, func}``."""
+    buckets: dict[str, list[float]] = {"seq": [], "struct": [], "func": []}
+    for k, v in (sim_by_modality or {}).items():
+        try:
+            score = float(v)
+        except (TypeError, ValueError):
+            continue
+        key = str(k).lower()
+        if key in _SEQ_METRICS or key in ("seq", "sequence"):
+            buckets["seq"].append(score)
+        elif key in _STRUCT_METRICS or key in ("struct", "structure"):
+            buckets["struct"].append(score)
+        elif key in _FUNC_METRICS or key in ("func", "function"):
+            buckets["func"].append(score)
+    return {k: round(max(vals), 4) for k, vals in buckets.items() if vals}
+
+
 def fuse_rbp_hits(
     hit_lists: list[list[dict[str, Any]]],
     *,
@@ -108,6 +136,9 @@ def fuse_rbp_hits(
         if den <= 0:
             continue
         fused_score = num / den
+        sim_raw = {
+            k: round(v, 4) for k, v in (slot.get("metrics") or {}).items()
+        }
         fused.append(
             {
                 "alias": alias,
@@ -115,10 +146,10 @@ def fuse_rbp_hits(
                 "score": round(fused_score, 4),
                 "metric": "fused",
                 "rank": 0,
-                "sim_by_modality": {
-                    k: round(v, 4) for k, v in (slot.get("metrics") or {}).items()
-                },
+                "sim_by_modality": sim_raw,
                 "sim_normalized": {k: round(v, 4) for k, v in metrics.items()},
+                # Evidence shape for LLM Checkpoint 1 (not authoritative s_i).
+                "similarity_breakdown": proposal_breakdown(sim_raw),
             }
         )
     fused.sort(key=lambda x: x["score"], reverse=True)
@@ -175,13 +206,25 @@ def aggregate_probability(
     predictions: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """p_hat = sum(s_i * p_i * c_i) / sum(s_i * c_i)  (Stage 3 aggregation)."""
-    pred_by = {p.get("rbp_id") or p.get("alias"): p for p in predictions}
+    pred_by: dict[str, dict[str, Any]] = {}
+    for p in predictions:
+        if not isinstance(p, dict):
+            continue
+        for key in (p.get("rbp_id"), p.get("alias"), p.get("uniprot")):
+            if key:
+                pred_by[str(key).upper()] = p
     num = den = 0.0
     parts = []
     for px in proxies:
-        rid = px["rbp_id"]
+        rid = px.get("rbp_id") or px.get("alias")
+        if not rid:
+            continue
         s = float(px.get("similarity_score") or 0.0)
-        pr = pred_by.get(rid) or {}
+        pr = (
+            pred_by.get(str(rid).upper())
+            or pred_by.get(str(px.get("alias") or "").upper())
+            or {}
+        )
         p = pr.get("prob")
         if p is None:
             continue

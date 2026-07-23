@@ -15,7 +15,7 @@ axes:
   sequence: true
   domain: true
   structure: true
-  use_af3: false
+  use_af3: true
   function_annotation: true
   rna_blastn: true
   struct_align_refine: true
@@ -48,10 +48,10 @@ integrate:
   use_donor_quality: true
   use_abstain: true
 predict:
-  aggregate: max
+  aggregate: weighted
 structure_policy:
   prefer_afdb: true
-  use_af3_fallback: false
+  use_af3_fallback: true
 llm:
   enabled: true
   stage1_function_reasoning: true

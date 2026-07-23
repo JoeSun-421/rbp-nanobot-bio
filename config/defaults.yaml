@@ -17,8 +17,8 @@ axes:
   sequence: true
   domain: true
   structure: true
-  # AF3 optional; prefer AFDB (structure_policy). Keep false until AF3 env probe is green.
-  use_af3: false
+  # AF3 fallback when AFDB miss (proposal §4); probe failure → caveat, ≠ sim 0.
+  use_af3: true
   function_annotation: true
   rna_blastn: true
   struct_align_refine: true
@@ -61,12 +61,14 @@ integrate:
   use_abstain: true
 
 predict:
-  # Product default: max over donor heads. Weighted mean is an evolve candidate (see proposal §4).
-  aggregate: max
+  # Proposal §4: p_hat = Σ s_i·p_i·c_i / Σ s_i·c_i (c_i defaults to 1.0).
+  # Delivery window pooling stays max; cross-donor weighting uses committed proxies.
+  aggregate: weighted
 
 structure_policy:
   prefer_afdb: true
-  use_af3_fallback: false
+  # No AFDB → try predict_structure once; on failure surface structure_axis_unavailable.
+  use_af3_fallback: true
 
 llm:
   enabled: true   # two BUILD_SPEC §5 touchpoints; needs API via configure_llm.sh / env

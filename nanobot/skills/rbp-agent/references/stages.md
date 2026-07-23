@@ -38,7 +38,7 @@ After a successful in-panel resolve, do **not** call:
 
 **Goal:** Find up to **5** donor RBPs that have heads, via multi-view similarity.
 
-**Canonical order (BUILD_SPEC):** characterize → **parallel** retrieve → fuse → **`confidence_abstain`** → Stage 2 predict.
+**Canonical order (proposal §4):** characterize → **parallel** retrieve → fuse (evidence) → **`commit_proxy_candidates`** (LLM `s_i`) → **`confidence_abstain`** → Stage 2 predict.
 
 ### 5.1 Cache first
 
@@ -72,26 +72,38 @@ Run **in parallel intent** (batch tool calls in one turn when possible):
 
 Raw delivery tools (`esm_embed`, `colabfold_msa`, `pymol_util`, `function_category`, …) are registered when useful — prefer curated wrappers above.
 
-### 5.4 Fuse donors (deterministic baseline)
+### 5.4 Fuse donors (deterministic evidence) + Checkpoint 1 commit
 
 ```text
 fuse_similarity_views(
   hits_emb=..., hits_seq=..., hits_struct=..., hits_dom=...,
   exclude_aliases=[target]
 )
-# or hit_lists=[hits_emb, hits_seq, ...]
+# donors[*].similarity_breakdown = {seq, struct, func}  (evidence)
+
+commit_proxy_candidates(candidates=[
+  {
+    "rbp_id": "...",
+    "alias": "...",
+    "similarity_score": 0.78,          # LLM-calibrated (authoritative s_i)
+    "similarity_breakdown": {"seq": 0.82, "struct": 0.61, "func": 0.85},
+    "rationale": "shared RRM; both splicing factors; ESM cosine 0.81"
+  },
+  ...
+])
 ```
 
-**Fusion rules**
+**Fusion / commit rules**
 
 | Rule | Value |
 | --- | --- |
 | Include RNA view when available | `rna_embed` / `rna_fm` from `rna_similarity` |
 | `rna_blastn` | Separate evidence — **do not** rename to RNA-FM |
 | Claim “RNA-FM”? | Only if `backend=real` |
-| Drop donors | Fused similarity **&lt; 0.30** (`τ_drop`) |
+| Drop donors | Committed / fused similarity **&lt; 0.30** (`τ_drop`) |
 | Cap | **N_cand ≤ 5** |
-| Checkpoint 1 | Confirm/trim fused donors using function text — **do not invent scores** |
+| Checkpoint 1 | LLM calibrates `similarity_score` from fuse breakdown + function text; **must** call `commit_proxy_candidates` |
+| Authoritative `s_i` | Committed scores only — deterministic fuse is evidence |
 
 ### 5.5 Abstain **before** predict (mandatory on transfer)
 
@@ -101,14 +113,14 @@ confidence_abstain(hits=<hits_emb or fused embedding hits>)
 
 - Use **embedding** hits (`hits_emb`) when available.
 - If `confident=false` → hedge / low confidence; you may still predict donors but must surface abstain in `caveats`.
-- Runtime **blocks** `predict_interaction` on transfer/multi-donor until `confidence_abstain` has been called this turn.
+- Runtime **blocks** `predict_interaction` on transfer/multi-donor until `commit_proxy_candidates` **and** `confidence_abstain` have been called this turn.
 
 ### 5.6 Structure axis order
 
 1. `structure_fetch` (AFDB / cache)
 2. `struct_similarity` (Foldseek; US-align refine when enabled)
 3. Optional `structure_consensus`
-4. Else `predict_structure` (AF3) **≤ 1** — pass `regions=[[start,end],…]` from domain/RBD when known
+4. On AFDB miss: `predict_structure` (AF3) **≤ 1** — pass `regions=[[start,end],…]` from domain/RBD when known
 5. Else `structure_axis=unavailable` → continue without structure zeros; force **low confidence**
 
 **Critical:** structure failure is **not** similarity `0`. Omit that axis.
@@ -124,41 +136,38 @@ If ESM fails but MMseqs returned `hits_seq`, continue with seq axis only and kee
 **Goal:** Score the query RNA under each donor’s RhoBind head (**after** §5.5 abstain).
 
 ```text
-predict_interaction(rna, rbps=[donor aliases…])   # batch preferred
+predict_interaction(rna, rbps=[donor aliases…])   # batch preferred; aggregate=weighted default
 ```
 
 | Situation | Action |
 | --- | --- |
 | Single donor fails inside a batch | Skip that donor; do **not** blindly retry the whole batch |
-| Collect scores | Only `prob` from successful tool rows |
+| Collect scores | Only `prob` from successful tool rows (`confidence` stub=1.0; `feature_attribution={}`) |
+| Cross-donor `p_hat` | Default **weighted**: `Σ s_i·p_i·c_i / Σ s_i·c_i` using committed `s_i` |
 | Batch / head fails with OOM or timeout | **No retry** → `p_hat: null`, low confidence |
 
 ---
 
 ## 7. Stage 3 — Integrate + evidence critic
 
-**Goal:** Turn donor probabilities + similarities into one grounded verdict.
+**Goal:** Ground the verdict; `p_hat` is already tool-sourced from Stage 2 weighted aggregation.
 
 ### 7.1 Tool order
 
-Call in order (skip only if required inputs are missing):
+Call when useful (skip if required inputs are missing):
 
 | # | Tool | Purpose |
 | --- | --- | --- |
 | 1 | `transfer_prior_lookup` | LOO / transfer prior for the method |
-| 2 | `donor_quality_prior` | Down-weight weak donors |
-| 3 | `similarity_weighted_vote` | Fuse probs × similarities |
+| 2 | `donor_quality_prior` | Down-weight weak donors (context for explanation) |
+| 3 | `similarity_weighted_vote` | Optional delivery integrate tool — **do not** override Stage-2 `p_hat` |
 | 4 | *(no tool)* Evidence critic | Checklist below → may force low confidence |
 
-> Note: `confidence_abstain` is **Stage 1.5** (post-fuse, pre-predict), not Stage 3.
+> Note: `confidence_abstain` is **Stage 1.5** (post-commit, pre-predict), not Stage 3.
 
-### 7.2 `similarity_weighted_vote` input shape
+### 7.2 `supporting_rbps`
 
-```json
-[{"donor": "PTBP1", "prob": 0.96}]
-```
-
-**Not** `{"PTBP1": 0.96}`. Hits must carry real similarity scores from Stage 1 / fusion.
+Use committed LLM `similarity_score` (and predict `prob`) for each supporting donor — not the raw deterministic fuse score alone.
 
 ### 7.3 Evidence checklist
 

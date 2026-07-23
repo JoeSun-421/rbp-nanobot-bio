@@ -160,9 +160,11 @@ class FuseSimilarityViewsTool(Tool):
     def description(self) -> str:
         return (
             "Fuse multi-view RbpHit lists into ranked donors using runtime "
-            "fusion_weights. Prefer hit_lists=[hits_emb, hits_seq, struct, domain]. "
-            "After fuse: call confidence_abstain(hits_emb) then predict_interaction "
-            "on fused donor aliases (BUILD_SPEC order)."
+            "fusion_weights (deterministic evidence baseline). Each donor includes "
+            "similarity_breakdown {seq,struct,func} for Checkpoint 1. "
+            "After fuse: call commit_proxy_candidates with LLM-calibrated "
+            "similarity_score, then confidence_abstain, then predict_interaction "
+            "(proposal §4: fuse → commit → abstain → predict)."
         )
 
     @property
@@ -252,7 +254,8 @@ class FuseSimilarityViewsTool(Tool):
                     "weights_source": config_source(),
                     "tau_drop": tau_f,
                     "fusion_weights": weights,
-                    "next": "confidence_abstain on hits_emb, then predict_interaction",
+                    "next": "commit_proxy_candidates (LLM-calibrated s_i), then "
+                    "confidence_abstain, then predict_interaction",
                 }
             )
 

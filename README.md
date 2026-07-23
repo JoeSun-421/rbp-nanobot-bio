@@ -93,7 +93,7 @@ Acceptance commands are top-level CLI (`accept-golden`, `accept-llm`, `gap-closu
 
 Defaults (Table 3 / `config/defaults.yaml`): `n_cand=5`, `tau_drop=0.30`, near-match `0.95`, label cuts `0.75/0.50/0.25`.
 
-**Axes note:** shipped defaults enable `structure` / `rna_blastn` / `literature` with AFDB preferred; `use_af3` stays false until AF3 env probe is green. Structure failure must not be scored as similarity `0`.
+**Axes note:** shipped defaults enable `structure` / `rna_blastn` / `literature` with AFDB preferred; **AF3 fallback is on** (`use_af3` / `use_af3_fallback`) when AFDB misses — probe failure surfaces a caveat, never similarity `0`. Default cross-donor aggregate is `weighted` (proposal §4).
 
 ---
 

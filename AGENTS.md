@@ -29,11 +29,12 @@ Executable gates: [`docs/工程指南.zh.md`](docs/工程指南.zh.md) §9. Chat
 - Skill SoT: `nanobot/skills/rbp-agent/SKILL.md`. Scientific claims need `eval-plan` / `evolve-eval` report paths.
 - Model metadata in `config/defaults.yaml` → `models:`.
 
-## Implementation notes (legal deviations from proposal prose)
+## Implementation notes (proposal §4 fidelity)
 
-- Structure: AFDB → Foldseek; `use_af3` default false.
+- Structure: AFDB → Foldseek; AF3 fallback on AFDB miss (`use_af3` / `use_af3_fallback` default true).
 - Sequence: ESM-C + MMseqs dual axes (not protein BLASTn).
-- Aggregate: default `predict.aggregate: max`.
+- Aggregate: default `predict.aggregate: weighted` (proposal §4 \(\sum s\cdot p\cdot c\`); authoritative \(s_i\) from `commit_proxy_candidates`).
+- Fuse: deterministic `fuse_similarity_views` is evidence; LLM Checkpoint 1 commits calibrated scores.
 - `p_hat` is raw; do not claim calibrated P(bind).
 
 ## After edits

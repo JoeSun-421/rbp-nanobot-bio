@@ -26,6 +26,7 @@ def run_accept_llm(
         "stage3_explanation": False,
         "abstain_before_predict": False,
         "parallel_or_dual_seq": False,
+        "llm_commit_proxies": False,
         "evidence": {},
     }
 
@@ -59,6 +60,7 @@ def run_accept_llm(
                 touchpoints["stage3_explanation"] = True
             stage1_tools = {
                 "fuse_similarity_views",
+                "commit_proxy_candidates",
                 "get_func_annotation",
                 "function_category",
                 "seq_similarity",
@@ -80,6 +82,8 @@ def run_accept_llm(
                         "predict_interaction"
                     ):
                         touchpoints["abstain_before_predict"] = True
+                if "commit_proxy_candidates" in tools:
+                    touchpoints["llm_commit_proxies"] = True
                 if "seq_similarity" in tools or "rna_blastn" in tools:
                     touchpoints["parallel_or_dual_seq"] = True
             ok_mode = (mode == "nanobot_llm") if strict else True

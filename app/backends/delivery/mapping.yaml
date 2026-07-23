@@ -45,6 +45,10 @@ fuse_similarity_views:
   type: agent_local
   module: rbp_eval.fuse_hits
   note: Fuse hits with config/evolved.yaml fusion_weights
+commit_proxy_candidates:
+  type: agent_local
+  module: nanobot.agent.tools.rbp.commit_proxies
+  note: "Proposal §4 Checkpoint 1 — LLM-calibrated proxy s_i (authoritative)"
 rna_similarity:
   type: agent_local
   module: app.backends.rna_fm

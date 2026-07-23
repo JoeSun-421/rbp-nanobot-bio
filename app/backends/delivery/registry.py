@@ -65,6 +65,7 @@ PROPOSAL_TOOL_NAMES: frozenset[str] = frozenset(
         "literature_search",
         "lookup_proxy_cache",
         "fuse_similarity_views",
+        "commit_proxy_candidates",
         "rna_similarity",
         "check_near_known",
     }

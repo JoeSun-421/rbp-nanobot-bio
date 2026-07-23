@@ -1,20 +1,3 @@
-# Tracked seed for the gitignored ``config/evolved.candidate.yaml`` (C6).
-#
-# A fresh clone has no ``evolved.candidate.yaml`` (it is gitignored — produced by
-# `rbp-agent evolve`). This seed lets a collaborator bootstrap a candidate without
-# running the full evolve loop:
-#
-#     cp config/evolved.candidate.yaml.example config/evolved.candidate.yaml
-#     # …edit weights/thresholds/axes as desired…
-#     rbp-agent gate                 # light eval reports must exist
-#     rbp-agent promote-evolved      # candidate → evolved.yaml (live)
-#
-# Or use the convenience flag: `rbp-agent promote-evolved --seed` copies this seed
-# to the candidate path automatically when the candidate is missing.
-#
-# The live promoted config is ``config/evolved.yaml`` (tracked). The candidate is
-# a *proposed* config: `evolved: false`, `candidate: true`. `promote-evolved` flips
-# both flags and writes `evolved.yaml`.
 schema_version: 2.0+evolved
 backend: delivery
 cohort: K562
@@ -32,7 +15,7 @@ axes:
   sequence: true
   domain: true
   structure: true
-  use_af3: false
+  use_af3: true
   function_annotation: true
   rna_blastn: true
   struct_align_refine: true
@@ -71,10 +54,10 @@ integrate:
   use_donor_quality: true
   use_abstain: true
 predict:
-  aggregate: max
+  aggregate: weighted
 structure_policy:
   prefer_afdb: true
-  use_af3_fallback: false
+  use_af3_fallback: true
 llm:
   enabled: true
   stage1_function_reasoning: true

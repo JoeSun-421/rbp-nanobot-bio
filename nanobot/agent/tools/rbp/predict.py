@@ -57,7 +57,17 @@ def _predict_cache_key(rna: str, rbps: list[str], cohort: str, device: str) -> s
                 "default": "auto",
                 "description": "Prefer cuda when available (ideal GPU env)",
             },
-            "aggregate": {"type": "string", "enum": ["max", "mean"], "default": "max"},
+            "aggregate": {
+                "type": "string",
+                "enum": ["max", "mean", "weighted"],
+                "default": "weighted",
+                "description": (
+                    "Cross-donor aggregation when multiple rbps are scored. "
+                    "'weighted' = proposal §4 Σ s_i·p_i·c_i / Σ s_i·c_i using "
+                    "committed LLM similarity_score (c_i defaults to 1.0). "
+                    "Window aggregation inside each head stays max/mean at delivery."
+                ),
+            },
             "force_transfer": {
                 "type": "boolean",
                 "default": False,
@@ -186,6 +196,18 @@ class PredictInteractionTool(Tool):
             )
             return out
 
+        # Cross-donor aggregate mode (proposal §4 weighted). Delivery only
+        # accepts max/mean for per-window pooling inside each head.
+        cfg_agg = None
+        try:
+            from nanobot.agent.tools.rbp.common import get_runtime_config
+
+            cfg_agg = (get_runtime_config().get("predict") or {}).get("aggregate")
+        except Exception:
+            cfg_agg = None
+        req_agg = str(kwargs.get("aggregate") or cfg_agg or "weighted")
+        delivery_agg = req_agg if req_agg in ("max", "mean") else "max"
+
         def _run():
             client = get_delivery_client(device=device)
             return client.call(
@@ -195,7 +217,7 @@ class PredictInteractionTool(Tool):
                     "rbps": rbps_list,
                     "cohort": cohort,
                     "device": device,
-                    "aggregate": kwargs.get("aggregate") or "max",
+                    "aggregate": delivery_agg,
                     # delivery subprocess timeout (seconds)
                     "timeout_s": int(
                         kwargs.get("timeout_s")
@@ -242,6 +264,22 @@ class PredictInteractionTool(Tool):
             PredictInteractionTool._cache[key] = result
             return result
         preds = out.get("predictions") or []
+        # Proposal §4 Stage 2 return contract: stub confidence + feature_attribution
+        # (delivery does not provide saliency / per-head confidence).
+        enriched: list[dict[str, Any]] = []
+        for p in preds:
+            if not isinstance(p, dict):
+                continue
+            row = dict(p)
+            if row.get("confidence") is None:
+                row["confidence"] = 1.0
+            if "feature_attribution" not in row:
+                row["feature_attribution"] = {}
+            # Normalize id keys for Stage-3 aggregation matching.
+            if not row.get("rbp_id") and row.get("alias"):
+                row["rbp_id"] = row["alias"]
+            enriched.append(row)
+        preds = enriched
         # BUILD_SPEC: single in-panel alias = own-head score → Stage-0 path stops.
         path = "own_head" if len(rbps_list) == 1 else "multi_head"
         probs = [
@@ -259,6 +297,7 @@ class PredictInteractionTool(Tool):
                         "n_windows": out.get("n_windows"),
                         "path": path,
                         "prob": None,
+                        "aggregate": req_agg,
                         "stop_hint": (
                             "No usable prob (unknown RBP or no cohort head). "
                             "Do NOT treat as own-head success. "
@@ -272,6 +311,35 @@ class PredictInteractionTool(Tool):
             )
             PredictInteractionTool._cache[key] = result
             return result
+
+        # Cross-donor p_hat: proposal §4 weighted mean when aggregate=weighted.
+        p_hat: float | None
+        agg_meta: dict[str, Any] | None = None
+        if path == "own_head":
+            p_hat = float(probs[0])
+        elif req_agg == "weighted":
+            try:
+                from nanobot.agent.tools.rbp.turn_guards import committed_proxies
+                from rbp_eval.fuse_hits import aggregate_probability
+
+                proxies = committed_proxies()
+                if proxies:
+                    agg_meta = aggregate_probability(proxies, preds)
+                    p_hat = agg_meta.get("p_hat")
+                    if p_hat is None:
+                        p_hat = max(probs)
+                else:
+                    # Should be gated, but fall back safely.
+                    p_hat = max(probs)
+                    agg_meta = {"fallback": "max", "reason": "no_committed_proxies"}
+            except Exception as exc:
+                p_hat = max(probs)
+                agg_meta = {"fallback": "max", "reason": str(exc)}
+        elif req_agg == "mean":
+            p_hat = sum(float(x) for x in probs) / len(probs)
+        else:
+            p_hat = max(probs)
+
         result = dumps(
             ok(
                 {
@@ -279,12 +347,19 @@ class PredictInteractionTool(Tool):
                     "cohort": out.get("cohort"),
                     "n_windows": out.get("n_windows"),
                     "path": path,
-                    "prob": probs[0] if path == "own_head" else max(probs),
+                    "prob": p_hat,
+                    "aggregate": req_agg,
+                    "aggregation": agg_meta,
                     "stop_hint": (
                         "OWN-HEAD success: map predictions[0].prob → p_hat/label, "
                         "emit JSON verdict now. Do NOT call transfer/similarity/domain."
                         if path == "own_head"
-                        else "Multi-head: continue Stage 3 integrate if proxies."
+                        else (
+                            "Multi-head: p_hat from proposal §4 weighted aggregation "
+                            "(committed s_i × prob × c_i); continue Stage 3 explanation."
+                            if req_agg == "weighted"
+                            else "Multi-head: continue Stage 3 integrate if proxies."
+                        )
                     ),
                     "_delivery_script": out.get("_script"),
                 },

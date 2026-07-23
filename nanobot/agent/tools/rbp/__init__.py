@@ -15,6 +15,7 @@ from nanobot.agent.tools.rbp.annotation import (
     LiteratureSearchTool,
 )
 from nanobot.agent.tools.rbp.catalogue import GetKnownRBPListTool
+from nanobot.agent.tools.rbp.commit_proxies import CommitProxyCandidatesTool
 from nanobot.agent.tools.rbp.evolve_tools import (
     FuseSimilarityViewsTool,
     LookupProxyCacheTool,
@@ -38,6 +39,7 @@ ALL_RBP_TOOL_CLASSES = [
     LiteratureSearchTool,
     LookupProxyCacheTool,
     FuseSimilarityViewsTool,
+    CommitProxyCandidatesTool,
     CheckNearKnownTool,
 ]
 
@@ -66,6 +68,7 @@ __all__ = [
     "LiteratureSearchTool",
     "LookupProxyCacheTool",
     "FuseSimilarityViewsTool",
+    "CommitProxyCandidatesTool",
     "CheckNearKnownTool",
     "PhmmerSimilarityTool",
     "register_all",

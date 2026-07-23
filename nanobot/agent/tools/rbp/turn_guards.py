@@ -23,23 +23,29 @@ from nanobot.agent.tools.rbp.stage_contract import (
 
 # After successful own-head predict, retrieve / transfer tools must refuse.
 _OWN_HEAD_STOP: bool = False
-# Unseen path: fuse → confidence_abstain → predict (BUILD_SPEC §4).
+# Unseen path: fuse → commit_proxy_candidates → confidence_abstain → predict (§4).
 _FUSE_DONE: bool = False
+_COMMIT_DONE: bool = False
 _ABSTAIN_DONE: bool = False
 
 # Accumulated evidence flags for Stage-3 normalize_verdict (tool-sourced).
 _EVIDENCE_FLAGS: dict[str, Any] = {}
+# LLM-calibrated proxies from commit_proxy_candidates (authoritative s_i).
+_COMMITTED_PROXIES: list[dict[str, Any]] = []
 
 # Tools blocked after own-head success (Stage 0 STOP) — declared in stage_contract.
 RETRIEVE_AFTER_OWN_HEAD: frozenset[str] = OWN_HEAD_STOP_BLOCKED
 
 
 def reset_stage_guards() -> None:
-    global _OWN_HEAD_STOP, _FUSE_DONE, _ABSTAIN_DONE, _EVIDENCE_FLAGS
+    global _OWN_HEAD_STOP, _FUSE_DONE, _COMMIT_DONE, _ABSTAIN_DONE
+    global _EVIDENCE_FLAGS, _COMMITTED_PROXIES
     _OWN_HEAD_STOP = False
     _FUSE_DONE = False
+    _COMMIT_DONE = False
     _ABSTAIN_DONE = False
     _EVIDENCE_FLAGS = {}
+    _COMMITTED_PROXIES = []
     _RETRIEVE_DONE.clear()
 
 
@@ -53,6 +59,24 @@ def mark_fuse_done() -> None:
     _FUSE_DONE = True
 
 
+def mark_commit_done() -> None:
+    global _COMMIT_DONE
+    _COMMIT_DONE = True
+
+
+def set_committed_proxies(proxies: list[dict[str, Any]]) -> None:
+    """Store LLM-calibrated proxies and mark Checkpoint 1 complete."""
+    global _COMMITTED_PROXIES
+    _COMMITTED_PROXIES = [dict(p) for p in proxies if isinstance(p, dict)]
+    mark_commit_done()
+    add_evidence_flag("llm_calibrated_proxies", True)
+    add_evidence_flag("n_committed_proxies", len(_COMMITTED_PROXIES))
+
+
+def committed_proxies() -> list[dict[str, Any]]:
+    return [dict(p) for p in _COMMITTED_PROXIES]
+
+
 def mark_abstain_done() -> None:
     global _ABSTAIN_DONE
     _ABSTAIN_DONE = True
@@ -61,6 +85,10 @@ def mark_abstain_done() -> None:
 
 def fuse_done() -> bool:
     return bool(_FUSE_DONE)
+
+
+def commit_done() -> bool:
+    return bool(_COMMIT_DONE)
 
 
 def abstain_done() -> bool:
@@ -84,6 +112,8 @@ def _done_set() -> set[str]:
     done: set[str] = set()
     if _FUSE_DONE:
         done.add("fuse_similarity_views")
+    if _COMMIT_DONE:
+        done.add("commit_proxy_candidates")
     if _ABSTAIN_DONE:
         done.add("confidence_abstain")
     return done
@@ -118,7 +148,7 @@ def transfer_predict_blocked_reason(
     rbps: list[str],
     cohort: str = "K562",
 ) -> Optional[str]:
-    """Block donor/transfer predict until fuse → confidence_abstain (when enabled).
+    """Block donor/transfer predict until fuse → commit → abstain (when enabled).
 
     The edges are declared in :mod:`stage_contract` (``REQUIRES``); the messages
     below surface the earliest unmet prerequisite in stage order so the LLM gets
@@ -144,6 +174,20 @@ def transfer_predict_blocked_reason(
     # Data-driven: only enforce edges that stage_contract declares.
     predict_reqs = REQUIRES.get("predict_interaction", ())
     abstain_reqs = REQUIRES.get("confidence_abstain", ())
+    commit_reqs = REQUIRES.get("commit_proxy_candidates", ())
+    if "fuse_similarity_views" in commit_reqs and not _FUSE_DONE:
+        return (
+            "Transfer path: call fuse_similarity_views before "
+            "commit_proxy_candidates / confidence_abstain / predict_interaction. "
+            "Proposal §4: fuse → commit → abstain → predict."
+        )
+    if "commit_proxy_candidates" in abstain_reqs and not _COMMIT_DONE:
+        return (
+            "Transfer path: call commit_proxy_candidates after fuse "
+            "(LLM-calibrated similarity_score + breakdown) before "
+            "confidence_abstain / predict_interaction. "
+            "Proposal §4 Checkpoint 1."
+        )
     if "fuse_similarity_views" in abstain_reqs and not _FUSE_DONE:
         return (
             "Transfer path: call fuse_similarity_views before confidence_abstain / "
@@ -151,25 +195,46 @@ def transfer_predict_blocked_reason(
         )
     if "confidence_abstain" in predict_reqs and not _ABSTAIN_DONE:
         return (
-            "Transfer path: call confidence_abstain after fuse "
+            "Transfer path: call confidence_abstain after commit "
             "(prefer hits_emb / embedding hits) before predict_interaction. "
-            "BUILD_SPEC: fuse → abstain → predict."
+            "Proposal §4: fuse → commit → abstain → predict."
         )
     return None
 
 
 def abstain_blocked_reason() -> Optional[str]:
-    """Block confidence_abstain until fuse on the unseen/transfer path."""
+    """Block confidence_abstain until fuse + commit on the unseen/transfer path."""
     if _OWN_HEAD_STOP:
         return (
             "Stage 0 STOP: own-head already succeeded; refuse confidence_abstain. "
             "Emit JSON verdict now."
         )
     abstain_reqs = REQUIRES.get("confidence_abstain", ())
+    if "commit_proxy_candidates" in abstain_reqs and not _COMMIT_DONE:
+        return (
+            "Call commit_proxy_candidates (LLM-calibrated proxies) before "
+            "confidence_abstain. Proposal §4: fuse → commit → abstain → predict."
+        )
     if "fuse_similarity_views" in abstain_reqs and not _FUSE_DONE:
         return (
             "Call fuse_similarity_views before confidence_abstain. "
             "BUILD_SPEC: fuse → abstain → predict."
+        )
+    return None
+
+
+def commit_blocked_reason() -> Optional[str]:
+    """Block commit_proxy_candidates until fuse on the unseen path."""
+    if _OWN_HEAD_STOP:
+        return (
+            "Stage 0 STOP: own-head already succeeded; refuse commit_proxy_candidates. "
+            "Emit JSON verdict now."
+        )
+    commit_reqs = REQUIRES.get("commit_proxy_candidates", ())
+    if "fuse_similarity_views" in commit_reqs and not _FUSE_DONE:
+        return (
+            "Call fuse_similarity_views before commit_proxy_candidates. "
+            "Proposal §4: fuse (evidence) → LLM commit (authoritative s_i)."
         )
     return None
 
@@ -242,9 +307,13 @@ __all__ = [
     "reset_stage_guards",
     "mark_own_head_success",
     "mark_fuse_done",
+    "mark_commit_done",
+    "set_committed_proxies",
+    "committed_proxies",
     "mark_abstain_done",
     "mark_retrieve_done",
     "fuse_done",
+    "commit_done",
     "abstain_done",
     "own_head_stop_active",
     "add_evidence_flag",
@@ -252,6 +321,7 @@ __all__ = [
     "retrieve_blocked_reason",
     "transfer_predict_blocked_reason",
     "abstain_blocked_reason",
+    "commit_blocked_reason",
     "fuse_blocked_reason",
     "blocked_envelope_json",
     "alias_has_panel_head",

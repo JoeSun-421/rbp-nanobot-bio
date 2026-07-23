@@ -136,6 +136,9 @@ def test_defaults_match_proposal():
     assert thr["unlikely"] == 0.25
     assert cfg["llm"]["stage1_function_reasoning"] is True
     assert cfg["llm"]["stage3_explanation"] is True
+    assert cfg["predict"]["aggregate"] == "weighted"
+    assert cfg["axes"]["use_af3"] is True
+    assert cfg["structure_policy"]["use_af3_fallback"] is True
 
 
 def test_proposal_tool_names_registered():
@@ -154,6 +157,7 @@ def test_proposal_tool_names_registered():
         "literature_search",
         "lookup_proxy_cache",
         "fuse_similarity_views",
+        "commit_proxy_candidates",
         "rna_similarity",
     ):
         assert required in names, f"missing curated tool {required}"

@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def test_transfer_predict_requires_fuse_then_abstain(monkeypatch):
+def test_transfer_predict_requires_fuse_commit_then_abstain(monkeypatch):
     # Load SoT module directly (overlay may not be synced yet).
     import importlib.util
 
@@ -33,6 +33,22 @@ def test_transfer_predict_requires_fuse_then_abstain(monkeypatch):
     reason = tg.transfer_predict_blocked_reason(
         force_transfer=True, rbps=["FUS"], cohort="K562"
     )
+    assert reason and "commit_proxy_candidates" in reason
+
+    tg.set_committed_proxies(
+        [
+            {
+                "rbp_id": "FUS",
+                "alias": "FUS",
+                "similarity_score": 0.8,
+                "similarity_breakdown": {"seq": 0.8},
+                "rationale": "test",
+            }
+        ]
+    )
+    reason = tg.transfer_predict_blocked_reason(
+        force_transfer=True, rbps=["FUS"], cohort="K562"
+    )
     assert reason and "confidence_abstain" in reason
 
     tg.mark_abstain_done()
@@ -44,7 +60,7 @@ def test_transfer_predict_requires_fuse_then_abstain(monkeypatch):
     )
 
 
-def test_abstain_requires_fuse_first():
+def test_abstain_requires_commit_after_fuse():
     import importlib.util
 
     path = ROOT / "nanobot" / "agent" / "tools" / "rbp" / "turn_guards.py"
@@ -55,8 +71,21 @@ def test_abstain_requires_fuse_first():
 
     tg.reset_stage_guards()
     reason = tg.abstain_blocked_reason()
-    assert reason and "fuse_similarity_views" in reason
+    assert reason and "commit_proxy_candidates" in reason
     tg.mark_fuse_done()
+    reason = tg.abstain_blocked_reason()
+    assert reason and "commit_proxy_candidates" in reason
+    tg.set_committed_proxies(
+        [
+            {
+                "rbp_id": "X",
+                "alias": "X",
+                "similarity_score": 0.5,
+                "similarity_breakdown": {},
+                "rationale": "t",
+            }
+        ]
+    )
     assert tg.abstain_blocked_reason() is None
 
 

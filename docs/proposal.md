@@ -157,13 +157,13 @@ For each surviving candidate \(p_i\), the agent issues \(\hat{p}_i=f_\theta(r,p_
 
 ### Stage 3 — Aggregation and Explanation
 
-**Numeric aggregation.** Product default is **`predict.aggregate: max`** over donor heads (Delivery integrate may still expose similarity-weighted vote as a tool). The classical similarity-weighted mean
+**Numeric aggregation.** Product default is **`predict.aggregate: weighted`**:
 
 \[
 \hat{p}=\frac{\sum_{i=1}^{N_{\mathrm{cand}}} s_i\cdot\hat{p}_i\cdot c_i}{\sum_{i=1}^{N_{\mathrm{cand}}} s_i\cdot c_i}
 \]
 
-remains an offline evolve candidate, not the silent default. Transfer priors / donor quality / abstain gates run **before** the final explanation.
+where \(s_i\) is the LLM-calibrated score from `commit_proxy_candidates` and \(c_i\) defaults to `1.0` when the predictor does not return confidence. Delivery `similarity_weighted_vote` remains an optional integrate tool and must not silently override this `p_hat`. Transfer priors / donor quality / abstain gates run **before** the final explanation.
 
 **Label thresholds.**
 
@@ -194,7 +194,7 @@ All tools follow nanobot’s Tool contract: a name, a description, a JSON-schema
 | P0 | `seq_similarity(target, candidates?)` | ESM-C + MMseqs dual axes (`hits_emb` / `hits_seq`). |
 | P1 | `struct_similarity` / `structure_fetch` | Foldseek on AFDB (preferred); optional USalign refine. |
 | P1 | `get_func_annotation` / `domain_architecture` | UniProt + PDB / domain textual annotation. |
-| P1 | `fuse_similarity_views` / `confidence_abstain` | Multi-view fuse + OOD abstain (before predict on transfer). |
+| P1 | `fuse_similarity_views` / `commit_proxy_candidates` / `confidence_abstain` | Deterministic fuse (evidence) + LLM-calibrated commit (authoritative \(s_i\)) + OOD abstain before predict. |
 | P1 | `transfer_prior_lookup` / `donor_quality_prior` / `similarity_weighted_vote` | Delivery integrate E1–E4. |
 | P2 | `predict_structure(seq)` | AF3 fallback when enabled and no AFDB structure. |
 | P2 | `literature_search(rbp_name)` | Top-k abstracts to augment annotation. |
@@ -284,9 +284,9 @@ For the points left open in the initial sketch, we adopt the following defaults 
 |----------|---------|-----------|
 | Number of candidates \(N_{\mathrm{cand}}\) | Fixed cap of 5; LLM may drop entries below similarity floor \(\tau_{\mathrm{drop}}=0.30\). | Five proxies are enough to smooth single-model noise without inflating predictor cost; a hard floor avoids spurious low-quality proxies dragging the mean. |
 | Fast-path threshold | Strict UniProt match; or sequence identity ≥ 95% flagged as “near-known”. | Strict ID is unambiguous; the 95% near-match rule is a well-established homology cutoff and is reported in the explanation for transparency. |
-| Structure data source | Prefer AFDB cache for \(\mathcal{K}\); Foldseek similarity; AF3 optional (`axes.use_af3=false` until probe green); structure failure ≠ sim `0`. | Matches Delivery HANDOFF; avoids AF3 cold-start cost on the catalogue. |
-| Output granularity | Four-level label plus **raw** \(\hat{p}\) and rule-based `confidence`. | Aligns with wet-lab triage; does not claim ECE-calibrated P(bind) without reports. |
-| Donor aggregation | Default `max` over donor probs; weighted vote available as integrate tool / evolve candidate. | Stable MVP; weighted mean revisitable under offline evolve-eval. |
+| Structure data source | Prefer AFDB cache for \(\mathcal{K}\); Foldseek similarity; **AF3 fallback on AFDB miss** (`axes.use_af3=true` / `use_af3_fallback=true`); probe failure → caveat; structure failure ≠ sim `0`. | Matches §4; graceful degrade when AF3 unavailable. |
+| Output granularity | Four-level labels + **raw** \(\hat{p}\) + rule-based `confidence`. | Aligns with wet-lab triage; no ECE-calibrated P(bind) claim without reports. |
+| Donor aggregation | Default \(\hat{p}=\sum s_i\hat{p}_i c_i/\sum s_i c_i\) (`predict.aggregate: weighted`); \(c_i\) defaults to 1.0; authoritative \(s_i\) from `commit_proxy_candidates`. | Matches §4; delivery `similarity_weighted_vote` is optional. |
 | Agent framework | nanobot (Python SDK + custom Tool subclasses + a dedicated skill). | Per the team’s existing toolchain; lightweight core, native MCP, and observable via hooks. |
 
 **Table 3:** Default decisions for the open design points.

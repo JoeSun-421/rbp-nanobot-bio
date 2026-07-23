@@ -140,13 +140,13 @@ ESM/MMseqs    AFDB/Foldseek(+AF3)  UniProt/文献
 
 | 视图（View） | 工具（Tools） | 输出（Output） |
 |--------------|---------------|----------------|
-| 序列（Sequence） | BLASTn、ESM embeddings | Top-K 目录 RBP 及相似度分数；ESM 给出对远端同源更稳健的语义距离。 |
-| 结构（Structure） | AF3（仅当 \(p^\star\) 本地无结构时）、USalign | Top-K 目录 RBP 及 TM-scores。 |
+| 序列（Sequence） | ESM-C embeddings + MMseqs（图 1；非蛋白 BLASTn） | Top-K 目录 RBP 及相似度分数；ESM 给出对远端同源更稳健的语义距离。 |
+| 结构（Structure） | AFDB → Foldseek；无 AFDB 时 AF3 一次；可选 USalign refine | Top-K 目录 RBP 及 TM / Foldseek 分数；结构失败 ≠ sim `0`。 |
 | 功能（Function） | UniProt、PDB、literature search | 自由文本注释（GO 术语、结构域、功能描述）。 |
 
-**表 1（Table 1）：** Stage 1 检索视图。智能体在可能时并发发出这些调用；当 AF3 不可用或超时，结构视图回退到仅序列。
+**表 1（Table 1）：** Stage 1 检索视图。智能体在可能时并发发出这些调用；当 AF3 不可用或超时，结构视图回退到仅序列/功能，并 surface `structure_axis_unavailable`。
 
-**LLM 融合（第一个 LLM 检查点）（LLM fusion, first LLM checkpoint）。** 智能体随后请 LLM 将三个候选列表与文本注释合并为至多 \(N_{\mathrm{cand}}=5\) 个代理候选的排序列表，每个标注为：
+**LLM 融合（第一个 LLM 检查点）（LLM fusion, first LLM checkpoint）。** 智能体先跑确定性 `fuse_similarity_views` 作为证据，再请 LLM 将三个候选列表与文本注释合并为至多 \(N_{\mathrm{cand}}=5\) 个代理候选，经 `commit_proxy_candidates` 写入权威 `s_i`，每个标注为：
 
 ```json
 {
@@ -219,7 +219,7 @@ ESM/MMseqs    AFDB/Foldseek(+AF3)  UniProt/文献
 | P0 | `seq_similarity(target, candidates?)` | ESM-C + MMseqs 双轴（`hits_emb` / `hits_seq`）。 |
 | P1 | `struct_similarity` / `structure_fetch` | AFDB 上 Foldseek（优先）；可选 USalign refine。 |
 | P1 | `get_func_annotation` / `domain_architecture` | UniProt + PDB / 结构域文本注释。 |
-| P1 | `fuse_similarity_views` / `confidence_abstain` | 多视图融合 + OOD abstain（transfer 上预测前）。 |
+| P1 | `fuse_similarity_views` / `commit_proxy_candidates` / `confidence_abstain` | 确定性融合（证据）+ LLM 标定 commit（权威 \(s_i\)）+ OOD abstain（transfer 上预测前）。 |
 | P1 | `transfer_prior_lookup` / `donor_quality_prior` / `similarity_weighted_vote` | Delivery integrate E1–E4。 |
 | P2 | `predict_structure(seq)` | AF3 回退（需轴开启且无 AFDB 结构）。 |
 | P2 | `literature_search(rbp_name)` | top-k 摘要增强注释。 |
@@ -309,9 +309,9 @@ print(result.content)  # JSON 判定（verdict）
 |------------------|-----------------|-------------------|
 | 候选数量 \(N_{\mathrm{cand}}\) | 固定上限 5；LLM 可丢弃相似度低于下限 \(\tau_{\mathrm{drop}}=0.30\) 的条目。 | 五个代理足以平滑单模型噪声而不过度抬高预测器成本；硬下限避免低质量代理拖累均值。 |
 | 快速路径阈值（Fast-path threshold） | 严格 UniProt 匹配；或序列一致度 \(\ge 95\%\) 并标注为 “near-known”。 | 严格 ID 无歧义；95% 近匹配是成熟同源截止，并在解释中报告以保持透明。 |
-| 结构数据来源（Structure data source） | \(\mathcal{K}\) 优先 AFDB 缓存 + Foldseek；AF3 可选（`axes.use_af3=false` 直至探针绿）；结构失败 ≠ sim `0`。 | 对齐 Delivery HANDOFF；避免目录侧 AF3 冷启动。 |
+| 结构数据来源（Structure data source） | \(\mathcal{K}\) 优先 AFDB 缓存 + Foldseek；**无 AFDB 时默认 AF3 回退**（`axes.use_af3=true` / `use_af3_fallback=true`）；探针失败 → caveat，结构失败 ≠ sim `0`。 | 对齐 §4；冷启动失败时优雅降级到仅序列/功能。 |
 | 输出粒度（Output granularity） | 四级标签 + **raw** \(\hat{p}\) + 规则 `confidence`。 | 与湿实验筛查对齐；无报告时不宣称 ECE 校准 P(bind)。 |
-| 供体聚合（Donor aggregation） | 默认对供体 prob 取 `max`；加权投票为 integrate 工具 / evolve 候选。 | 稳定 MVP；加权均值可在离线 evolve-eval 下再议。 |
+| 供体聚合（Donor aggregation） | 默认 \(\hat{p}=\sum s_i\hat{p}_i c_i/\sum s_i c_i\)（`predict.aggregate: weighted`）；`c_i` 缺省 1.0；LLM commit 的 `s_i` 为权威。 | 对齐 §4 正文；delivery `similarity_weighted_vote` 为旁路。 |
 | Agent 框架（Agent framework） | nanobot（Python SDK + 自定义 Tool 子类 + 专用 skill）。 | 按团队既有工具链；轻量核心、原生 MCP，并经 hooks 可观测。 |
 
 **表 3（Table 3）：** 开放设计点的默认决策。

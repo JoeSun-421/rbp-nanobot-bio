@@ -48,9 +48,10 @@ def test_requires_is_acyclic_and_has_serial_edges():
     from nanobot.agent.tools.rbp.stage_contract import REQUIRES, is_acyclic
 
     assert is_acyclic(), "REQUIRES edges must not form a cycle"
-    # fuse → (any retrieve); abstain → fuse; predict → abstain (transfer path)
+    # fuse → commit → abstain → predict (proposal §4)
     assert "__any_retrieve__" in REQUIRES["fuse_similarity_views"]
-    assert "fuse_similarity_views" in REQUIRES["confidence_abstain"]
+    assert "fuse_similarity_views" in REQUIRES["commit_proxy_candidates"]
+    assert "commit_proxy_candidates" in REQUIRES["confidence_abstain"]
     assert "confidence_abstain" in REQUIRES["predict_interaction"]
 
 
@@ -62,7 +63,8 @@ def test_turn_guards_consults_contract():
     assert tg.RETRIEVE_AFTER_OWN_HEAD == sc.OWN_HEAD_STOP_BLOCKED
     # The serial edges the guards enforce are exactly those declared in the contract.
     assert "confidence_abstain" in sc.REQUIRES["predict_interaction"]
-    assert "fuse_similarity_views" in sc.REQUIRES["confidence_abstain"]
+    assert "commit_proxy_candidates" in sc.REQUIRES["confidence_abstain"]
+    assert "fuse_similarity_views" in sc.REQUIRES["commit_proxy_candidates"]
 
 
 def test_fuse_blocked_reason_available_and_uses_contract():
