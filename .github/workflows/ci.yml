@@ -32,13 +32,13 @@ jobs:
       - name: Install App + Nanobot runtime + sync RBP overlay
         env:
           NANOBOT_BIO_ROOT: ${{ github.workspace }}
-          NANOBOT_SRC: ${{ github.workspace }}/_runtime_nanobot
         run: |
           python -m pip install -U pip setuptools wheel
           pip install -r requirements.lock
           pip install -e ".[dev]"
           # Install the nanobot runtime (provides nanobot.agent.tools.base etc.)
-          pip install -e "$NANOBOT_SRC"
+          # from PyPI with --no-deps — its transitive deps are already in the lock.
+          pip install --no-deps nanobot-ai==0.2.2
           # Mirror the SoT RBP tool overlay into the imported nanobot package so
           # pytest can import nanobot.agent.tools.rbp.* (turn_guards, stage_contract, …)
           python -m app.sync_overlay
