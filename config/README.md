@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh.md)
 
-Runtime YAML for fusion weights, abstain thresholds, label thresholds, integrate/predict policies, and structure axes. Loaded by `rbp_agent.core.runtime_config` and related tools.
+Runtime YAML for fusion weights, abstain thresholds, label thresholds, integrate/predict policies, and structure axes. Loaded by `app.core.runtime_config` and related tools.
 
 ## Files
 
@@ -20,4 +20,4 @@ Runtime YAML for fusion weights, abstain thresholds, label thresholds, integrate
 
 ## Related
 
-[../README.md](../README.md) · [../rbp_agent/core/](../rbp_agent/core/README.md) · [../docs/工程指南.zh.md](../docs/工程指南.zh.md) §4.5
+[../README.md](../README.md) · [../app/core/](../app/core/README.md) · [../docs/工程指南.zh.md](../docs/工程指南.zh.md) §4.5

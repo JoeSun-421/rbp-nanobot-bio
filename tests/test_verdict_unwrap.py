@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
 
 
 def test_unwrap_fenced_json_inside_explanation():
-    from rbp_agent.core.verdict_schema import extract_verdict_from_content
+    from app.core.verdict_schema import extract_verdict_from_content
 
     messy = """{
   "label": "No",
@@ -28,7 +28,7 @@ def test_unwrap_fenced_json_inside_explanation():
 
 
 def test_parse_markdown_fenced_verdict():
-    from rbp_agent.core.verdict_schema import extract_verdict_from_content
+    from app.core.verdict_schema import extract_verdict_from_content
 
     content = """Here is the result:
 ```json
@@ -49,8 +49,8 @@ def test_parse_markdown_fenced_verdict():
 
 def test_terminal_style_nested_fence_in_explanation():
     """Exact failure mode from rbp-agent chat: JSON dumped into explanation."""
-    from rbp_agent.core.chat_ux import format_verdict_display
-    from rbp_agent.core.verdict_schema import extract_verdict_from_content
+    from app.core.chat_ux import format_verdict_display
+    from app.core.verdict_schema import extract_verdict_from_content
 
     # After json.loads of the outer object, explanation has real newlines + fence
     outer = {
@@ -89,7 +89,7 @@ def test_terminal_style_nested_fence_in_explanation():
 
 
 def test_prior_missing_and_structure_flags_force_low_confidence():
-    from rbp_agent.core.verdict_schema import normalize_verdict
+    from app.core.verdict_schema import normalize_verdict
 
     v = normalize_verdict(
         {

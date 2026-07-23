@@ -117,7 +117,7 @@ class RBPTraceHook(AgentHook):
         verdict: Optional[dict[str, Any]] = None,
     ) -> None:
         """Write a query_end event (also callable from integrate after Nanobot.run)."""
-        from rbp_agent.core.verdict_schema import (
+        from app.core.verdict_schema import (
             extract_verdict_from_content,
             normalize_verdict,
         )

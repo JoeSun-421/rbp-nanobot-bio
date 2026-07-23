@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-融合权重、abstain / 标签阈值、integrate / predict 与结构轴等运行时 YAML。由 `rbp_agent.core.runtime_config` 及相关工具读取。
+融合权重、abstain / 标签阈值、integrate / predict 与结构轴等运行时 YAML。由 `app.core.runtime_config` 及相关工具读取。
 
 ## 文件
 

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_rna_fm_mock_hits_deterministic(tmp_path):
-    from rbp_agent.backends.rna_fm.client import (
+    from app.backends.rna_fm.client import (
         ensure_default_bank,
         rna_similarity_hits,
     )
@@ -32,11 +32,11 @@ def test_rna_fm_mock_hits_deterministic(tmp_path):
 
 
 def test_rna_similarity_tool_registers_and_runs(tmp_path, monkeypatch):
-    from rbp_agent.backends.rna_fm import client as rna_client
+    from app.backends.rna_fm import client as rna_client
     from nanobot.agent.tools.rbp.rna_similarity import RnaSimilarityTool
     from nanobot.agent.tools.rbp import ALL_RBP_TOOL_CLASSES
-    from rbp_agent.backends.delivery.registry import PROPOSAL_TOOL_NAMES, build_proposal_tools
-    from rbp_agent.backends.delivery.stage_tools import STAGE_TOOL_SETS
+    from app.backends.delivery.registry import PROPOSAL_TOOL_NAMES, build_proposal_tools
+    from app.backends.delivery.stage_tools import STAGE_TOOL_SETS
 
     bank = tmp_path / "bank.json"
     rna_client.ensure_default_bank(bank)
@@ -61,7 +61,7 @@ def test_rna_similarity_tool_registers_and_runs(tmp_path, monkeypatch):
 
 def test_mapping_includes_rna_similarity():
     mapping = yaml.safe_load(
-        (ROOT / "rbp_agent" / "backends" / "delivery" / "mapping.yaml").read_text(
+        (ROOT / "app" / "backends" / "delivery" / "mapping.yaml").read_text(
             encoding="utf-8"
         )
     )

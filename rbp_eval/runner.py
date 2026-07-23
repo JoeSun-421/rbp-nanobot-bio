@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]  # nanobot-bio
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from rbp_agent.core.paths import DEFAULT_EVAL_TRACE, DEFAULT_VAL_BATCH, ensure_artifact_dirs
+from app.core.paths import DEFAULT_EVAL_TRACE, DEFAULT_VAL_BATCH, ensure_artifact_dirs
 from rbp_eval.hooks import JsonlTraceHook
 
 ensure_artifact_dirs()
@@ -42,7 +42,7 @@ def load_default_val_cases(
     force_transfer: bool = True,
 ) -> list[dict[str, Any]]:
     """Build D_val-style cases from delivery LOO hold-out list + sample RNA."""
-    from rbp_agent.backends.delivery.env import apply_delivery_env, delivery_root
+    from app.backends.delivery.env import apply_delivery_env, delivery_root
 
     apply_delivery_env()
     ex = delivery_root() / "agent" / "examples"
@@ -107,9 +107,9 @@ def run_loo_val_batch(
     Always runs ``domain_architecture``. Optionally ``esm_similarity`` (RAM-heavy).
     Does **not** run RhoBind; prediction stays on the Nanobot agent path.
     """
-    from rbp_agent.backends.delivery.client import DeliveryToolClient
-    from rbp_agent.backends.delivery.env import apply_delivery_env
-    from rbp_agent.core.verdict_schema import normalize_verdict
+    from app.backends.delivery.client import DeliveryToolClient
+    from app.backends.delivery.env import apply_delivery_env
+    from app.core.verdict_schema import normalize_verdict
     from rbp_eval.fuse_hits import fuse_rbp_hits
 
     apply_delivery_env()

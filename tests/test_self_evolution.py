@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_runtime_config_loads():
-    from rbp_agent.core.runtime_config import (
+    from app.core.runtime_config import (
         abstain_thresholds,
         clear_runtime_config_cache,
         fusion_weights,
@@ -33,8 +33,8 @@ def test_runtime_config_loads():
 
 
 def test_confidence_abstain_injects_evolved_thresholds():
-    from rbp_agent.backends.delivery.registry import _normalize_delivery_payload
-    from rbp_agent.core.runtime_config import abstain_thresholds, clear_runtime_config_cache
+    from app.backends.delivery.registry import _normalize_delivery_payload
+    from app.core.runtime_config import abstain_thresholds, clear_runtime_config_cache
 
     clear_runtime_config_cache()
     expected = abstain_thresholds()
@@ -325,7 +325,7 @@ def test_run_self_evolution_includes_abstain_retune(tmp_path, monkeypatch):
 
 
 def test_proposal_tools_include_evolve():
-    from rbp_agent.backends.delivery.registry import PROPOSAL_TOOL_NAMES, build_proposal_tools
+    from app.backends.delivery.registry import PROPOSAL_TOOL_NAMES, build_proposal_tools
 
     assert "lookup_proxy_cache" in PROPOSAL_TOOL_NAMES
     assert "fuse_similarity_views" in PROPOSAL_TOOL_NAMES

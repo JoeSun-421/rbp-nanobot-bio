@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 def _default_cache_path() -> Path:
     try:
-        from rbp_agent.core.paths import PROXY_CACHE
+        from app.core.paths import PROXY_CACHE
 
         return PROXY_CACHE
     except Exception:

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from rbp_agent.core.chat_ux import (
+from app.core.chat_ux import (
     CHAT_HELP,
     ThinkingSpinner,
     _color_label,
@@ -23,7 +23,7 @@ def test_help_lists_core_commands():
 def test_verdict_label_peek_and_color():
     body = '{\n  "label": "Strong",\n  "p_hat": 0.9\n}'
     assert _peek_verdict_label(body) == "Strong"
-    from rbp_agent.core.chat_ux import Style
+    from app.core.chat_ux import Style
     import io
 
     s = Style(io.StringIO())

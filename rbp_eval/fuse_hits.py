@@ -199,6 +199,6 @@ def label_from_p_hat(
     thresholds: Optional[dict[str, float]] = None,
 ) -> str:
     """Delegate to App SoT (``verdict_schema``) so label cuts stay single-sourced."""
-    from rbp_agent.core.verdict_schema import label_from_p_hat as _label
+    from app.core.verdict_schema import label_from_p_hat as _label
 
     return _label(p_hat, thresholds)

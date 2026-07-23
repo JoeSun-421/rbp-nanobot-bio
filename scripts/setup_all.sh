@@ -471,7 +471,7 @@ assert p.endswith('__init__.py') or '/nanobot/' in p, p
 echo "  sync plugin overlay into nanobot runtime ..."
 export NANOBOT_SRC NANOBOT_BIO_ROOT="$AGENT_ROOT" NANOBOT_WORKSPACE="$AGENT_ROOT/workspace"
 python -m pip install -e "${AGENT_ROOT}[dev]" -q || python -m pip install -e "$AGENT_ROOT" -q
-python -m rbp_agent.sync_overlay
+python -m app.sync_overlay
 python -c "from nanobot.agent.tools.rbp.predict import PredictInteractionTool; print('  nanobot.agent.tools.rbp OK', PredictInteractionTool)"
 
 echo "[5/6] .env + workspace skill ..."
@@ -523,7 +523,7 @@ chmod +x "$AGENT_ROOT/scripts/setup_all.sh" 2>/dev/null || true
 mkdir -p "$AGENT_ROOT/workspace/skills/rbp-agent" \
   "$AGENT_ROOT/workspace/memory"
 PYTHONPATH="$AGENT_ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 -c "
-from rbp_agent.core.paths import ensure_artifact_dirs, migrate_flat_artifacts
+from app.core.paths import ensure_artifact_dirs, migrate_flat_artifacts
 ensure_artifact_dirs()
 migrate_flat_artifacts()
 print('[setup] artifacts dirs OK')
@@ -537,7 +537,7 @@ print('[setup] artifacts dirs OK')
 # Always sync SoT plugin overlay → runtime + workspace
 echo "[sync] plugin overlay → NANOBOT_SRC + workspace ..."
 export PYTHONPATH="$BIO_ROOT:$AGENT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
-python -m rbp_agent.sync_overlay || {
+python -m app.sync_overlay || {
   echo "WARN: sync_overlay failed (NANOBOT_SRC may be incomplete); doctor will retry" >&2
 }
 # Ensure workspace skill marker stays present after sync
@@ -548,13 +548,13 @@ Edit the SoT (source-of-truth) instead:
 
   nanobot/skills/rbp-agent/SKILL.md
 
-Then run: `python -m rbp_agent.sync_overlay` or `rbp-agent doctor`.
+Then run: `python -m app.sync_overlay` or `rbp-agent doctor`.
 EOF
 
 if [[ "$SKIP_SMOKE" != "1" ]]; then
   echo "[6/6] Smoke + verify ..."
-  python -m rbp_agent doctor
-  python -m rbp_agent nanobot-smoke || true
+  python -m app doctor
+  python -m app nanobot-smoke || true
 else
   echo "[6/6] skip smoke"
 fi

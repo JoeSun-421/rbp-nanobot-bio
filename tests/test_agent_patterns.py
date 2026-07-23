@@ -25,7 +25,7 @@ def test_trace_schema_make_event():
 
 
 def test_axis_gate_blocks_structure_when_disabled():
-    from rbp_agent.backends.delivery.stage_tools import STAGE_TOOL_SETS, axis_enabled
+    from app.backends.delivery.stage_tools import STAGE_TOOL_SETS, axis_enabled
 
     assert "predict_interaction" in STAGE_TOOL_SETS["stage0"]
     ok, axis = axis_enabled("predict_structure", axes={"use_af3": False, "structure": False})

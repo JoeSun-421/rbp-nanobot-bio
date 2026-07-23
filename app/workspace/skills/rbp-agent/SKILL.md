@@ -1,0 +1,1 @@
+/root/autodl-tmp/bio_agent/nanobot-bio/plugin/nanobot/skills/rbp-agent/SKILL.md

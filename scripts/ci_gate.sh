@@ -11,4 +11,4 @@ cd "$AGENT_ROOT"
 # shellcheck disable=SC1091
 [[ -f .venv/bin/activate ]] && source .venv/bin/activate
 export PYTHONPATH="${AGENT_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
-exec python -m rbp_agent gate "$@"
+exec python -m app gate "$@"

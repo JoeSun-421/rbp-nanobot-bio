@@ -28,7 +28,7 @@ from typing import Any, Optional
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from rbp_agent.core.paths import REPORTS, TRACES, ensure_artifact_dirs
+from app.core.paths import REPORTS, TRACES, ensure_artifact_dirs
 from rbp_eval.loo_eval import (
     DEFAULT_VAL,
     _fetch_domain_hits,
@@ -338,7 +338,7 @@ def run_light_evaluation_plan(
     try_seq: bool = False,
     offline: bool = True,
 ) -> dict[str, Any]:
-    from rbp_agent.backends.delivery.client import DeliveryToolClient
+    from app.backends.delivery.client import DeliveryToolClient
 
     ensure_artifact_dirs()
     summary_p, metrics_p = _paths()

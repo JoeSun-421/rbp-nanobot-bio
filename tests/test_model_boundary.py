@@ -12,14 +12,14 @@ if str(ROOT) not in sys.path:
 
 
 def test_no_proposal_sot_or_fusion_shim():
-    assert not (ROOT / "rbp_agent" / "_proposal_sot").exists()
+    assert not (ROOT / "app" / "_proposal_sot").exists()
     assert not (ROOT / "rbp_eval" / "fusion.py").exists()
 
 
 def test_sot_root_is_repo_nanobot():
-    from rbp_agent.sot import skill_md, sot_root, tools_rbp
+    from app.sot import skill_md, sot_root, tools_rbp
 
-    assert sot_root() == (ROOT / "nanobot").resolve()
+    assert sot_root() == (ROOT / "plugin" / "nanobot").resolve()
     assert skill_md().is_file()
     assert (tools_rbp() / "predict.py").is_file()
 
@@ -35,7 +35,7 @@ def test_defaults_mock_rna_weights_zero_and_models_section():
 
 
 def test_checklist_two_fails_forces_low_confidence():
-    from rbp_agent.core.verdict_schema import normalize_verdict
+    from app.core.verdict_schema import normalize_verdict
 
     v = normalize_verdict(
         {
@@ -54,7 +54,7 @@ def test_checklist_two_fails_forces_low_confidence():
 
 
 def test_rna_similarity_envelope_marks_backend_mode():
-    from rbp_agent.backends.rna_fm.client import rna_similarity_hits
+    from app.backends.rna_fm.client import rna_similarity_hits
 
     out = rna_similarity_hits("ACGUACGUACGUACGUACGU", top_k=3)
     assert out.get("status") == "ok"
@@ -64,8 +64,8 @@ def test_rna_similarity_envelope_marks_backend_mode():
 
 
 def test_model_capability_matrix_writes():
-    from rbp_agent.core.model_registry import write_capability_matrix
-    from rbp_agent.core.paths import REPORTS
+    from app.core.model_registry import write_capability_matrix
+    from app.core.paths import REPORTS
 
     path = write_capability_matrix(REPORTS / "model_capability_matrix_test.json")
     assert path.is_file()

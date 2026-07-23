@@ -22,7 +22,7 @@ import yaml
 from rbp_eval.fuse_hits import DEFAULT_WEIGHTS, fuse_rbp_hits
 from rbp_eval.proxy_cache import promote_from_traces
 
-from rbp_agent.core.paths import (
+from app.core.paths import (
     DEFAULT_EVOLVE_REPORT,
     PACKAGE_ROOT,
     PROXY_CACHE,
@@ -237,7 +237,7 @@ def tool_attribution(
 def _load_loo_matrix() -> tuple[dict[str, dict[str, Any]], dict[tuple[str, str], float]]:
     import csv
 
-    from rbp_agent.backends.delivery.env import apply_delivery_env, resolve_delivery_paths
+    from app.backends.delivery.env import apply_delivery_env, resolve_delivery_paths
 
     apply_delivery_env()
     paths = resolve_delivery_paths()
@@ -479,7 +479,7 @@ def retune_abstain_thresholds(
     """
     _, matrix = _load_loo_matrix()
     try:
-        from rbp_agent.core.runtime_config import abstain_thresholds as _ab
+        from app.core.runtime_config import abstain_thresholds as _ab
 
         live = dict(_ab())
     except Exception:
@@ -856,8 +856,8 @@ def promote_evolved_config(
             f"No candidate config at {candidate}. Run: rbp-agent evolve"
         )
     if require_reports:
-        from rbp_agent.acceptance.gate import assert_eval_plan_report, assert_loo_report
-        from rbp_agent.core.paths import REPORTS
+        from app.acceptance.gate import assert_eval_plan_report, assert_loo_report
+        from app.core.paths import REPORTS
 
         loo = REPORTS / "eval_loo_report.json"
         plan = REPORTS / "evaluation_plan_report.json"
@@ -876,7 +876,7 @@ def promote_evolved_config(
     with open(live, "w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
     try:
-        from rbp_agent.core.runtime_config import clear_runtime_config_cache
+        from app.core.runtime_config import clear_runtime_config_cache
 
         clear_runtime_config_cache()
     except Exception:
@@ -914,7 +914,7 @@ def run_self_evolution(
     # base weights from runtime config when not supplied
     if base_weights is None:
         try:
-            from rbp_agent.core.runtime_config import fusion_weights
+            from app.core.runtime_config import fusion_weights
 
             base_weights = fusion_weights()
         except Exception:
@@ -1019,7 +1019,7 @@ def run_self_evolution(
             f"Wrote candidate config → {path} (run: rbp-agent promote-evolved after gate)"
         )
         try:
-            from rbp_agent.core.runtime_config import clear_runtime_config_cache
+            from app.core.runtime_config import clear_runtime_config_cache
 
             clear_runtime_config_cache()
         except Exception:

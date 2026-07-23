@@ -10,7 +10,7 @@ cd "$ROOT"
 mapfile -t FILES < <(git ls-files -z 2>/dev/null | tr '\0' '\n' | grep -vE '^(requirements\.lock|.*\.lock)$' || true)
 if ((${#FILES[@]} == 0)); then
   # Not a git checkout — scan common source roots
-  mapfile -t FILES < <(find rbp_agent rbp_eval nanobot tests scripts config docs \
+  mapfile -t FILES < <(find app rbp_eval nanobot tests scripts config docs \
     -type f \( -name '*.py' -o -name '*.md' -o -name '*.yaml' -o -name '*.yml' -o -name '*.sh' -o -name '*.toml' -o -name '*.txt' -o -name '*.example' \) 2>/dev/null | head -5000)
 fi
 

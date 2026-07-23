@@ -2,10 +2,26 @@
 
 Changes to the RBP Agent application (`nanobot-bio`). Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Final delivery alignment: `include_raw_delivery=all`; `check_near_known`; dual-axis `hits_emb`/`hits_seq`; AF3 `regions`; `function_category` in annotation; abstain-before-predict guards; conflict ledger `docs/冲突台账.zh.md`.
+
+### Fixed
+
+- `rna_blastn` / `protein_seq_similarity`: App-side `mmseqs_wrap.sh` injects `--threads` via `DeliveryToolClient` (avoids mmseqs all-core segfault `World Size: … dbSize: …` without editing delivery).
+
+### Changed
+
+- Product README (EN/ZH) and STATUS: final full-open toolkit; fuse → abstain → predict; honest calibration wording.
+- SKILL / Stage tool sets: `confidence_abstain` moved to post-fuse / pre-predict (BUILD_SPEC).
+
 ## [0.3.0] — 2026-07-21
 
 ### Added
 
+- **Layout:** `rbp_app` → `app/`; SoT → `plugin/nanobot/`; runtime data → `~/.nanobot-bio/{workspace,artifacts}`; added `AGENTS.md` / `CONTRIBUTING.md`.
 - Proposal-anchored change gates (`docs/工程指南.zh.md` §9 / §9.10) and Cursor rule
 - `config/defaults.yaml` `models:` metadata; doctor writes `model_capability_matrix.json`
 - Agent-local `rna_similarity` (mock by default); ESM disk cache under `artifacts/cache/esm/`
@@ -14,6 +30,8 @@ Changes to the RBP Agent application (`nanobot-bio`). Format: [Keep a Changelog]
 
 ### Changed
 
+- **Product CLI surface:** user commands are `doctor|onboard|agent|chat`; maintainer tools under `rbp-agent dev …`. Removed `mvp` acceptance entry.
+- **App package renamed** `rbp_agent` → **`app`** (application shell only). `workspace/` and `artifacts/` live under `app/` only (repo-root compat symlinks removed).
 - Single plugin SoT at repo-root `nanobot/`; removed `_proposal_sot` packaging tree
 - Workspace skill sync prefers symlink to SoT; `fusion.py` shim removed (`fuse_hits` only)
 - Default `rna_*` fusion weights set to 0 until a real RNA-FM checkpoint is configured
@@ -22,7 +40,7 @@ Changes to the RBP Agent application (`nanobot-bio`). Format: [Keep a Changelog]
 ### Fixed
 
 - Layout/compliance tests for SoT paths and proposal document presence
-
+- Stale `__editable__.nanobot_bio-*.pth` cleanup pattern in setup
 ## [0.2.0] — 2026-07-20
 
 ### Added
@@ -35,7 +53,7 @@ Changes to the RBP Agent application (`nanobot-bio`). Format: [Keep a Changelog]
 ### Changed
 
 - Plugin overlay under `nanobot/`; full framework only at `$NANOBOT_SRC`
-- `scripts/` limited to setup and gate helpers (acceptance under `rbp_agent.acceptance`)
+- `scripts/` limited to setup and gate helpers (acceptance under `app.dev`)
 - Documentation consolidated into `docs/工程指南.zh.md`
 
 ### Fixed

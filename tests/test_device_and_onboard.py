@@ -22,7 +22,7 @@ def test_resolve_device_respects_force_cpu(monkeypatch):
     except ImportError:
         import importlib.util
 
-        p = ROOT / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
+        p = ROOT / "plugin" / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
         spec = importlib.util.spec_from_file_location("rbp_common_sot", p)
         mod = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
@@ -41,7 +41,7 @@ def test_resolve_device_explicit_cpu(monkeypatch):
     except ImportError:
         import importlib.util
 
-        p = ROOT / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
+        p = ROOT / "plugin" / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
         spec = importlib.util.spec_from_file_location("rbp_common_sot2", p)
         mod = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
@@ -58,7 +58,7 @@ def test_resolve_device_auto_does_not_import_torch(monkeypatch):
     import importlib.util
 
     # Load SoT module fresh so we can clear its CUDA cache
-    p = ROOT / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
+    p = ROOT / "plugin" / "nanobot" / "agent" / "tools" / "rbp" / "common.py"
     spec = importlib.util.spec_from_file_location("rbp_common_notorch", p)
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -73,7 +73,7 @@ def test_resolve_device_auto_does_not_import_torch(monkeypatch):
 
 
 def test_onboard_catalog_covers_mainstream_vendors():
-    from rbp_agent.core.onboard import FEATURED, PROVIDER_MODELS, list_models_text, models_for
+    from app.core.onboard import FEATURED, PROVIDER_MODELS, list_models_text, models_for
 
     required = {
         "openai",

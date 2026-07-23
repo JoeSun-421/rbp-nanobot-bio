@@ -37,4 +37,4 @@ Use `rbp-agent layout|doctor|own-head|mvp` for machine-level checks: [../docs/�
 
 ## Related
 
-[../README.md](../README.md) · [../rbp_agent/acceptance/](../rbp_agent/acceptance/README.md)
+[../README.md](../README.md) · [../app/acceptance/](../app/acceptance/README.md)

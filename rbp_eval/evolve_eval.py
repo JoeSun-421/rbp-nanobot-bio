@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rbp_agent.core.paths import PACKAGE_ROOT, REPORTS, ensure_artifact_dirs
+from app.core.paths import PACKAGE_ROOT, REPORTS, ensure_artifact_dirs
 from rbp_eval.fuse_hits import DEFAULT_WEIGHTS, fuse_rbp_hits
 from rbp_eval.runner import DEFAULT_VAL_RBPS
 

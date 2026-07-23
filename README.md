@@ -5,37 +5,42 @@
 
 **English** | [中文](README.zh.md)
 
-Application layer for *in silico* RNA–RBP interaction assessment. The `rbp-agent` CLI drives a [Nanobot](https://github.com/HKUDS/nanobot) agent that calls a read-only science toolkit (`rhobind_agent_delivery`). Binding scores come only from predictor tools; the LLM plans tool use and writes grounded explanations.
+Application layer for *in silico* RNA–RBP interaction assessment. CLI `nanobot-bio` (alias `rbp-agent`) orchestrates a read-only science toolkit (`rhobind_agent_delivery`) through [Nanobot](https://github.com/HKUDS/nanobot). Binding scores come **only** from predictor tools; the LLM plans tool calls and writes grounded explanations.
 
-## Features
-
-- **In-catalogue (Stage 0):** resolve RBP → own-head `predict_interaction` → JSON verdict
-- **Transfer path:** multi-view retrieval (sequence / structure / function) → donor heads → integrate
-- **Isolated science backends:** conda-backed RhoBind, ESM, Foldseek; optional AF3; agent-local RNA similarity
-- **Evaluation:** light LOO lookup, evaluation-plan ablations, nested-split evolve-eval
-- **Safety defaults:** no shell / generic web tools; `p_hat=null` on OOM without inventing scores
-
-## Architecture
+## Repository layout
 
 ```text
-rbp-agent (App)  →  Nanobot runtime ($NANOBOT_SRC)  →  delivery ($DELIVERY_ROOT, read-only)
-     │                      │
-     ├─ config/             ├─ synced tools from nanobot/agent/tools/rbp/
-     ├─ rbp_eval/           └─ skill from nanobot/skills/rbp-agent/
-     └─ artifacts/
+nanobot-bio/
+  app/           # CLI, delivery bridge, chat UX, overlay sync
+  plugin/        # Plugin SoT: skills/rbp-agent + agent/tools/rbp
+  config/        # defaults.yaml / evolved.yaml
+  rbp_eval/      # Offline LOO / eval-plan / evolve-eval / accept-llm
+  scripts/       # setup / CI helpers
+  tests/         # pytest
+  docs/          # Local engineering notes (not required for install)
 ```
 
-| Layer | Role |
-|-------|------|
-| App | CLI, bridge, config, acceptance, SoT sync |
-| Runtime | Agent loop, tool registry, sessions |
-| Science | Stateless predictors and databases (not modified by this repo) |
+| Layer | Path | Role |
+|-------|------|------|
+| App | `app/` | `nanobot-bio` CLI, bridge, config load, sync into runtime |
+| Plugin SoT | `plugin/nanobot/` | Skills + RBP tools (synced to `$NANOBOT_SRC`) |
+| Eval | `rbp_eval/` | Offline validation / evolution (no online weight writes) |
+| Science | `$DELIVERY_ROOT` | Read-only RhoBind / search DBs (not edited here) |
+| Runtime | `$NANOBOT_SRC` | Nanobot agent loop (sibling install or clone) |
+
+## What it does
+
+- **In-catalogue (Stage 0):** `resolve_rbp` → own-head `predict_interaction` → JSON verdict → STOP
+- **Near-known:** seq identity ≥ 95% → headed donor once → STOP
+- **Unseen:** characterize → parallel retrieve → fuse → **abstain** → predict donors → integrate → JSON
+- **Isolation:** heavy torch / mmseqs in conda subprocesses; agent stays light
+- **Honesty:** no invented `p_hat`; structure failure ≠ similarity `0`; confidence is rules/checklist (not calibrated P(bind))
 
 ## Requirements
 
 - Python ≥ 3.10
-- Sibling checkouts: Nanobot runtime and `rhobind_agent_delivery` (typical layout under a shared `BIO_ROOT`)
-- Optional: GPU + conda envs from delivery setup for RhoBind / ESM / AF3
+- Sibling Nanobot runtime (`$NANOBOT_SRC`) and `rhobind_agent_delivery` (`$DELIVERY_ROOT`)
+- Optional: GPU + delivery conda envs (RhoBind / ESM / AF3)
 
 ## Install
 
@@ -43,65 +48,38 @@ rbp-agent (App)  →  Nanobot runtime ($NANOBOT_SRC)  →  delivery ($DELIVERY_R
 cd nanobot-bio
 bash scripts/setup_all.sh
 source .venv/bin/activate
-```
-
-Configure an LLM provider (OpenAI-compatible):
-
-```bash
-rbp-agent onboard
-# or: bash ../scripts/configure_llm.sh --ping
+nanobot-bio onboard    # LLM provider / API key
+nanobot-bio doctor
 ```
 
 ## Quick start
 
 ```bash
-rbp-agent doctor
-rbp-agent mvp
-rbp-agent agent --message "Does this RNA interact with RBP PTBP1? RNA: <seq>"
-rbp-agent chat
+nanobot-bio doctor
+nanobot-bio agent --message "Does this RNA interact with RBP PTBP1? RNA: <seq>"
+nanobot-bio chat
 ```
 
-## CLI
+## Commands
 
-| Command | Purpose |
-|---------|---------|
-| `doctor` | Paths, registry, skill sync, model capability matrix |
-| `onboard` | LLM provider / API key / model |
-| `mvp` / `own-head` | Acceptance paths |
-| `agent` / `chat` | Product Nanobot runs |
-| `eval-plan` / `evolve` / `evolve-eval` | Offline evaluation and strategy candidates |
-| `layout` / `gate` / `compliance` | Engineering checks |
+| Command | Audience | Purpose |
+|---------|----------|---------|
+| `doctor` / `onboard` | User | Paths, registry, skill sync, LLM config |
+| `agent` / `chat` | User | Product Nanobot runs |
+| `dev accept-golden` / `dev accept-llm` / `dev eval-plan` | Maintainer / Delivery | Acceptance & eval |
+| `dev loo-heavy` / `dev evolve-eval` | Maintainer | Offline science loops |
 
 ## Configuration
 
-Defaults live in [`config/defaults.yaml`](config/defaults.yaml) (thresholds, fusion weights, `models:` metadata). Live evolved overlays use `config/evolved.yaml` only when `evolved: true` after a passing gate.
+Defaults: [`config/defaults.yaml`](config/defaults.yaml) (Table-3 thresholds, fusion weights, axes, `models:`). Use `config/evolved.yaml` only when `evolved: true` and gates pass.
 
-## Evaluation
+## Delivery / Proposal notes
 
-- Light LOO uses delivery transfer CSVs (not full RhoBind recompute on all FASTAs).
-- Promote evolved configs only with engineering gate **and** nested-split evidence (`delta_auprc > 0`); otherwise keep candidates.
+- Do **not** modify `rhobind_agent_delivery/` from this App.
+- Product path is LLM agent (`Nanobot.run` / `run_streamed`), not a fixed Python DAG.
+- `score_calibration` is Delivery **v2** (not in registry) — do not claim calibrated probabilities.
+- Conflict ledger (local): `docs/冲突台账.zh.md`. Status: `docs/STATUS.md`.
 
-## Limitations
+## License / contact
 
-- AF3 may be unavailable on some GPUs; AFDB → Foldseek remains the default structure path.
-- Default RNA similarity is a mock embedder; fusion weights for `rna_*` stay at 0 until a real checkpoint is configured.
-- Label-threshold calibration needs an external `{p_hat, y}` set.
-
-## Documentation
-
-| Doc | Contents |
-|-----|----------|
-| [docs/工程指南.zh.md](docs/工程指南.zh.md) | Contracts, E2E, AF3, change gates (§9) |
-| [CHANGELOG.md](CHANGELOG.md) | Release notes |
-
-## Citation
-
-Cite the delivery scientific methods (RhoBind LOO / DESIGN), the Nanobot runtime, and this application version (e.g. v0.3.0) as appropriate.
-
-## Security
-
-Do not commit API keys, `.env`, or `~/.nanobot/config.json`. Rotate credentials that appear in logs.
-
-## License
-
-Application packaging and bridge code are part of this project. Delivery weights and checkpoints follow upstream licenses. Runtime: [HKUDS/nanobot](https://github.com/HKUDS/nanobot).
+Internal working package for the RBP agent delivery. See `CHANGELOG.md` for version history.

@@ -50,4 +50,4 @@ python -m rbp_eval.evolve_eval
 
 ## Related
 
-[../README.md](../README.md) · [../docs/工程指南.zh.md](../docs/工程指南.zh.md) §4.5–§6 · [../rbp_agent/](../rbp_agent/README.md)
+[../README.md](../README.md) · [../docs/工程指南.zh.md](../docs/工程指南.zh.md) §4.5–§6 · [../app/](../app/README.md)

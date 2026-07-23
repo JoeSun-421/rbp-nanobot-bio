@@ -14,11 +14,11 @@ if str(ROOT) not in sys.path:
 
 
 def test_mapping_covers_stage_whitelist_and_proposal():
-    from rbp_agent.backends.delivery.client import SCRIPT_MAP
-    from rbp_agent.backends.delivery.registry import PROPOSAL_TOOL_NAMES, STAGE_RAW_WHITELIST
+    from app.backends.delivery.client import SCRIPT_MAP
+    from app.backends.delivery.registry import PROPOSAL_TOOL_NAMES, STAGE_RAW_WHITELIST
 
     mapping = yaml.safe_load(
-        (ROOT / "rbp_agent" / "backends" / "delivery" / "mapping.yaml").read_text(
+        (ROOT / "app" / "backends" / "delivery" / "mapping.yaml").read_text(
             encoding="utf-8"
         )
     )

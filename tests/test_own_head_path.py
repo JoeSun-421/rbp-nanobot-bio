@@ -12,10 +12,10 @@ if str(ROOT) not in sys.path:
 
 
 def test_skill_always_on_and_own_head_playbook(tmp_path):
-    from rbp_agent.integrate import ensure_workspace_skill
+    from app.integrate import ensure_workspace_skill
     from nanobot.agent.skills import SkillsLoader
 
-    skill = ROOT / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
+    skill = ROOT / "plugin" / "nanobot" / "skills" / "rbp-agent" / "SKILL.md"
     text = skill.read_text(encoding="utf-8")
     assert text.startswith("---")
     assert "always: true" in text
@@ -24,13 +24,13 @@ def test_skill_always_on_and_own_head_playbook(tmp_path):
     assert "STOP" in text
 
     ensure_workspace_skill(tmp_path)
-    loader = SkillsLoader(tmp_path, builtin_skills_dir=ROOT / "nanobot" / "skills")
+    loader = SkillsLoader(tmp_path, builtin_skills_dir=ROOT / "plugin" / "nanobot" / "skills")
     always = loader.get_always_skills()
     assert "rbp-agent" in always
 
 
 def test_delivery_example_pos_rna_matches_readme():
-    from rbp_agent.backends.delivery.examples import load_example, own_head_prompt
+    from app.backends.delivery.examples import load_example, own_head_prompt
 
     ex = load_example("pos")
     assert ex["query"] == "PTBP1"
@@ -45,7 +45,7 @@ def test_delivery_example_pos_rna_matches_readme():
 
 
 def test_resolve_ptbp1_in_panel():
-    from rbp_agent.backends.delivery.client import DeliveryToolClient
+    from app.backends.delivery.client import DeliveryToolClient
 
     r = DeliveryToolClient(offline=True, use_conda=False).call(
         "resolve_rbp", {"query": "PTBP1"}
@@ -95,7 +95,7 @@ def test_predict_envelope_marks_own_head_path():
 
 
 def test_workspace_skill_sync_copies_always_frontmatter(tmp_path):
-    from rbp_agent.integrate import ensure_workspace_skill
+    from app.integrate import ensure_workspace_skill
 
     dest = ensure_workspace_skill(tmp_path)
     text = dest.read_text(encoding="utf-8")

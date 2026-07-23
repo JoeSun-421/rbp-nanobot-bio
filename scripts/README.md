@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh.md)
 
-Installation and engineering-gate helpers for **nanobot-bio**. Acceptance logic lives in importable modules under `rbp_agent.acceptance` (cf. CI entry scripts in pytest / ruff / Lightning repos).
+Installation and engineering-gate helpers for **nanobot-bio**. Acceptance logic lives in importable modules under `app.acceptance` (cf. CI entry scripts in pytest / ruff / Lightning repos).
 
 | Script | Role |
 |--------|------|

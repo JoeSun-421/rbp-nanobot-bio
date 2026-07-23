@@ -22,7 +22,7 @@ from typing import Any, Optional
 ROOT = Path(__file__).resolve().parents[1]  # nanobot-bio
 sys.path.insert(0, str(ROOT))
 
-from rbp_agent.core.paths import DEFAULT_LOO_REPORT, ensure_artifact_dirs
+from app.core.paths import DEFAULT_LOO_REPORT, ensure_artifact_dirs
 
 DEFAULT_VAL = [
     "NSUN2",
@@ -55,7 +55,7 @@ def load_transfer_matrix(path: Path) -> dict[tuple[str, str], float]:
 
 
 def _paths():
-    from rbp_agent.backends.delivery.env import apply_delivery_env, resolve_delivery_paths
+    from app.backends.delivery.env import apply_delivery_env, resolve_delivery_paths
 
     apply_delivery_env()
     paths = resolve_delivery_paths()
@@ -172,7 +172,7 @@ def _write_markdown_summary(path: Path, payload: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    from rbp_agent.backends.delivery.client import DeliveryToolClient
+    from app.backends.delivery.client import DeliveryToolClient
 
     ensure_artifact_dirs()
     ap = argparse.ArgumentParser(description="LOO light: donor policy vs CSV transfer AUPRC")
