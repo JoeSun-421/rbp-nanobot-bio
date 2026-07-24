@@ -93,7 +93,7 @@ nanobot-bio/
 
 默认（Table 3 / `config/defaults.yaml`）：`n_cand=5`，`tau_drop=0.30`，近同源 `0.95`，标签切分 `0.75/0.50/0.25`。
 
-**Axes 说明：** 默认 `structure` / `rna_blastn` / `literature` 为 **true**；无 AFDB 时 **AF3 回退开启**（`use_af3` / `use_af3_fallback`）；探针失败记 caveat，≠ sim `0`。供体聚合默认 `weighted`（提案 §4）。
+**Axes 说明：** 默认 `structure` / `rna_blastn` / `literature` 为 **true**；无 AFDB 时 **AF3 回退开启**（`use_af3` / `use_af3_fallback`）；探针失败记 caveat，≠ sim `0`。供体[...]
 
 ---
 
@@ -109,8 +109,53 @@ nanobot-bio/
 
 ## 6. 安装
 
+### 6.1 克隆仓库
+
+#### 使用 HTTPS（推荐用于初次安装）
 ```bash
-cd nanobot-bio
+git clone https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+#### 使用 SSH（需已配置 SSH 密钥）
+```bash
+git clone git@github.com:JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+#### 使用 GitHub CLI（需已安装 gh）
+```bash
+gh repo clone JoeSun-421/rbp-nanobot-bio
+cd rbp-nanobot-bio
+```
+
+#### 指定特定分支（如 develop）
+```bash
+git clone --branch develop https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+#### 指定特定版本 tag（如 v0.5.1）
+```bash
+git clone --branch v0.5.1 https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+#### 浅克隆（仅克隆最新提交，加快速度）
+```bash
+git clone --depth 1 https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+#### 浅克隆指定分支
+```bash
+git clone --branch main --depth 1 https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+### 6.2 安装依赖
+
+```bash
 bash scripts/setup_all.sh
 # 或跳过 AF3 加固：
 # bash scripts/setup_all.sh --skip-af3
