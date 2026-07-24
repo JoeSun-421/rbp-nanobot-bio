@@ -1,33 +1,55 @@
 <div align="center">
-  <img src="assets/nanobot_logo.png" alt="nanobot-bio" width="460">
+  <img src="assets/nanobot_logo.png" alt="nanobot-bio" width="480">
+
   <h1>nanobot-bio</h1>
-  <p>基于 Nanobot 的 RNA–RBP 结合预测 Agent。<br/>
-  编排「检索供体 → 借头预测 → 整合」，产出可审计的 JSON 判定。</p>
+
+  <p><b>RNA–RBP 结合预测 Agent</b></p>
   <p>
+    编排栈基于 <a href="https://github.com/HKUDS/nanobot">Nanobot</a>；科学分数只来自 delivery。<br/>
+    主路径：<em>检索供体 → 借头预测 → 整合</em><br/>
+    产出：可供 Delivery 验收的 JSON verdict
+  </p>
+
+  <p>
+    <a href="https://github.com/HKUDS/nanobot"><img src="https://img.shields.io/badge/Nanobot-HKUDS%2Fnanobot-111111?logo=github" alt="Nanobot 源码"></a>
     <img src="https://img.shields.io/badge/python-%E2%89%A53.10-blue" alt="Python">
     <img src="https://img.shields.io/badge/release-v0.5.1-green" alt="Release">
     <img src="https://img.shields.io/badge/tests-120%20passed-brightgreen" alt="Tests">
     <img src="https://img.shields.io/badge/stages-0%E2%86%921%E2%86%922%E2%86%923-green" alt="Stages">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   </p>
+
+  <p>
+    <a href="#-克隆-https">克隆</a> ·
+    <a href="#定位">定位</a> ·
+    <a href="#能力">能力</a> ·
+    <a href="#-快速开始">快速开始</a> ·
+    <a href="#分层架构">架构</a> ·
+    <a href="#配置与环境">配置</a> ·
+    <a href="#命令与验收">命令</a> ·
+    <a href="#测试与排错">测试</a> ·
+    <a href="#文档索引">文档</a>
+  </p>
+
   <p><a href="README.md">English</a> · <b>中文</b></p>
 </div>
 
-## 🧭 导航
+---
 
-- [克隆](#-克隆-https)
-- [概述](#概述)
-- [特性](#特性)
-- [快速开始](#-快速开始)
-- [架构](#架构)
-- [仓库布局](#仓库布局)
-- [控制流](#控制流)
-- [配置](#配置)
-- [命令](#命令)
-- [范围与边界](#范围与边界)
-- [测试](#测试)
-- [排错](#排错)
-- [文档](#文档)
+<div align="center">
+
+### 四层分工一眼看清
+
+| 层 | 落点 | 做什么 |
+|:--:|:----:|:-------|
+| **Controller** | 仓内 `nanobot/` | Stage 规划、两处 LLM checkpoint、出 JSON |
+| **Toolkit** | `nanobot/agent/tools/rbp/` | sequence / structure / function / integrate |
+| **Predictor** | `rhobind_agent_delivery` | 唯一可信的 `prob` / `p_hat` 来源 |
+| **Evaluator** | `rbp_eval/` | 离线 LOO、消融、evolve-eval — 不进 chat |
+
+</div>
+
+> **协作约定：** 本仓只通过只读 JSON bridge 调 delivery，不改 registry、权重和 delivery 源码。验收以 `accept-golden` 为准，而不是 delivery 自带的 `run_example.sh`。
 
 ---
 
@@ -38,247 +60,197 @@ git clone https://github.com/JoeSun-421/rbp-nanobot-bio.git
 cd rbp-nanobot-bio
 ```
 
-delivery 包与本仓放在**同级**：
+科学包与本仓**平级**放置，不要塞进 git tree：
 
 ```text
 bio_agent/
-├── rbp-nanobot-bio/           ← 本仓库
-└── rhobind_agent_delivery/    ← 科学包：registry、权重、DB
+├── rbp-nanobot-bio/            ← 本仓库（编排 + slim Nanobot）
+└── rhobind_agent_delivery/     ← registry · checkpoint · embedding / foldseek DB
 ```
 
-安装、环境变量、数据与验收见 [`INSTALL.md`](INSTALL.md)。
+从环境变量到验收门禁的完整说明见 [`INSTALL.md`](INSTALL.md)。国内若直连 GitHub 困难，可用镜像或代理后再 `git clone` 同一 HTTPS 地址。
 
 ---
 
-## 概述
+## 定位
 
-`nanobot-bio` 回答一个问题：*RNA R 是否与 RBP X 相互作用？*
+核心问题只有一句：**给定 RNA 序列与 RBP，是否结合？结合强度如何表述？**
 
-- 编排使用仓内 **精简 Nanobot** `nanobot/`，Proposal §6.2：Agent Controller + RBP 工具包，不含 Telegram / WebUI / channels。
-- 科学分数**仅**来自 `rhobind_agent_delivery` 中的工具。本仓经只读 JSON 桥调用，不修改 delivery 源码、权重、registry。
-- 离线评测与自演进在 `rbp_eval/`，与 chat 路径隔离。
-- Agent 产出 JSON verdict，字段含 `label`、`confidence`、`p_hat`、`explanation`、`supporting_rbps`，供 Delivery 验收。
+产品入口是 `nanobot-bio agent` / `chat`。底层走 `Nanobot.from_config` → `run` / `run_streamed`。仓内 `nanobot/` 是裁掉 channels / WebUI 之后的 slim Controller，并挂载 RBP Toolkit SoT。LLM 只负责规划与解释；数值分数必须来自 delivery 工具。离线评测、自演进全部关在 `rbp_eval/`，避免和交互路径搅在一起。
+
+最终对外交付物是 verdict JSON，字段固定为 `label`、`confidence`、`p_hat`、`explanation`、`supporting_rbps`。其中 `p_hat` 是 raw score，**不要**写成已校准的 P(bind)。
 
 ---
 
-## 特性
+## 能力
 
-### Agent 主循环
+### Stage 与路径
 
-- **Stage 0→1→2→3** 四阶段语义，两处 LLM checkpoint：`commit_proxy_candidates` 与 `normalize_verdict`。
-- **三条预测路径**：目录内 own-head 一次即停；近同源 identity ≥ 0.95 Fast Path；未见则检索 → fuse → abstain → 借头预测 → 整合。
-- **双轴序列检索**：ESM-C embedding + MMseqs，不用 protein BLASTn。
-- **结构轴**：AFDB 优先，AF3 fallback 默认开启；探针失败记 caveat，不写相似度 `0`。
-- **Stage contract** 由 `turn_guards` 强制：fuse → commit → abstain → predict，顺序由 `stage_contract.py` 数据驱动。
-- **JSON verdict schema** + Stage-3 checklist：≥2 项失败则强制 `confidence=low`。
+- Stage **0→1→2→3**，LLM checkpoint 两处：`commit_proxy_candidates`、`normalize_verdict`。
+- **目录内**：`resolve_rbp` 命中 catalogue 后 own-head 预测一次即 **STOP**。
+- **近同源**：`check_near_known`，identity ≥ 0.95 走 Fast Path。
+- **未见靶标**：表征 → 并行检索 → `fuse_similarity_views` → `confidence_abstain` → 借 donor head 预测 → 整合。
+- `turn_guards` + `stage_contract.py` 卡住顺序：fuse → commit → abstain → predict。
+- Stage-3 checklist 失败 ≥2 项时，强制 `confidence=low`。
 
-### 工具包 — 单一来源
+### 科学轴
 
-- 工具为 `nanobot.agent.tools.base.Tool` 子类，位于 `nanobot/agent/tools/rbp/`。
-- 四视图：sequence、structure、function、integrate。
-- delivery 脚本经 `app/backends/delivery` JSON 桥调用，子进程隔离、conda env 分离。
-- `RBP_RAW_TOOLS=whitelist` 为默认策展集；`all` 开放全部 37 工具供调试；`none` 关闭 raw 工具。
-- 可选 phmmer 远同源轴：设置 `RBP_PHMMER=1`。
+- 序列：ESM-C embedding **与** MMseqs 双轴，不用 protein BLASTn。
+- 结构：AFDB 优先；`use_af3_fallback` 默认开。探针失败只记 caveat，相似度不写成 `0`。
+- 可选远同源：`RBP_PHMMER=1`。
+- 工具策略：`RBP_RAW_TOOLS=whitelist` 默认策展集；调试可切 `all`。
 
-### 离线评测与演进
+### 离线演进
 
-- `rbp_eval/`：LOO、消融、evolve-eval，不进入 chat 路径。
-- 自演进**仅离线**：`evolve-eval` 产出候选；`delta_auprc > 0` 或 HOLD 后门禁通过，再 promote 到 `config/evolved.yaml`。
-- `RBPTraceHook` 写入 `artifacts/traces/*.jsonl`，供回放与归因。
+`evolve-eval` 在 nested-split 上比较 default vs retuned；`delta_auprc > 0` 或 HOLD 后才允许 `promote-evolved` 写入 `config/evolved.yaml`。过程 trace 落在 `artifacts/traces/`，便于复盘。
 
 ---
 
 ## ⚡ 快速开始
 
 ```bash
-bash scripts/setup_all.sh
-# 轻量：bash scripts/setup_all.sh --skip-af3
+bash scripts/setup_all.sh                 # 完整科学栈
+# bash scripts/setup_all.sh --skip-af3    # 跳过 AF3 加固
 source .venv/bin/activate
 nanobot-bio onboard && nanobot-bio doctor
 nanobot-bio agent --message "Does this RNA interact with RBP PTBP1? RNA: <seq>"
 # nanobot-bio chat
 ```
 
+`doctor` 只做本地路径 / registry / skill / axes 一致性检查，不联网验 token。
+
 ---
 
-## 架构
+## 分层架构
 
 ```text
-用户 / Delivery 验收
-        │
-        ▼
-nanobot-bio CLI  →  Nanobot.run / run_streamed
-        │
-        ├─ nanobot/                 ← Controller + Toolkit SoT
-        ├─ app/backends/delivery    ← 只读 JSON 桥
-        └─ rbp_eval/                ← 离线 Validation Evaluator
-                │
-                ▼
-        rhobind_agent_delivery      ← Predictor + DBs + ready 工具
+                 用户 / Delivery 验收方
+                           │
+                           ▼
+         nanobot-bio CLI → Nanobot.run / run_streamed
+                           │
+       ┌───────────────────┼───────────────────┐
+       ▼                   ▼                   ▼
+  nanobot/            app/backends/          rbp_eval/
+  slim Controller      delivery bridge      离线 Evaluator
+  + RBP Toolkit
+       │                   │
+       └─────────┬─────────┘
+                 ▼
+      rhobind_agent_delivery
+      Predictor · DB · ready tools
 ```
 
-| 层 | 路径 | 职责 |
-|----|------|------|
-| Agent Controller | 仓内 `nanobot/`，`Nanobot.from_config` → `run` | 规划工具、两 LLM 触点、输出 JSON |
-| Toolkit | `nanobot/agent/tools/rbp/` + 经桥的 delivery 脚本 | 序列 / 结构 / 功能 / 整合 |
-| Predictor | delivery `rhobind_predict`，conda env `rhobind` | 结合 `prob` |
-| 离线评测 | `rbp_eval/` | LOO、消融、evolve-eval — 非 chat |
+| 层 | 代码位置 | 职责边界 |
+|----|----------|----------|
+| Controller | `nanobot/` | 工具规划、checkpoint、会话、出 verdict |
+| Toolkit | `nanobot/agent/tools/rbp/` | 四视图 Tool 实现 |
+| Bridge | `app/backends/delivery` | 子进程 + conda 隔离，只读调用 |
+| Predictor | delivery `rhobind_predict` | 给出结合 `prob` |
+| Evaluator | `rbp_eval/` | LOO / 消融 / evolve — 禁止混进 chat |
+
+目录语义：`app/` 是产品壳；`nanobot/` 是 slim 框架与 Toolkit SoT；`artifacts/` 只装报告与 trace，可随时清空。
 
 ---
 
-## 仓库布局
+## 配置与环境
 
-```text
-nanobot-bio/
-├── app/                 # 产品壳：cli/{user,accept,eval,maint}、agent、delivery 桥
-├── nanobot/             # 精简 vendor 框架 + skills/rbp-agent + agent/tools/rbp
-├── config/              # defaults.yaml Table 3 + evolved.yaml
-├── rbp_eval/            # 离线评测 / 演进
-├── scripts/             # setup_all.sh、CI helpers
-├── tests/               # pytest：contract / compliance
-├── docs/                # 提案与清单 — 仅本地，不推 GitHub
-├── workspace/           # 默认 Nanobot workspace，skill sync 目标
-└── artifacts/           # 运行时报告 / traces / cache — gitignore
-```
+权威默认在 `config/defaults.yaml`。门禁通过后的候选落在 `config/evolved.yaml`。
 
----
-
-## 控制流
-
-| 路径 | 步骤 |
+| 变量 | 含义 |
 |------|------|
-| **目录内 — Stage 0** | `resolve_rbp` → `in_panel` → `predict_interaction` 一次 → JSON → **STOP** |
-| **近同源** | `check_near_known`，identity ≥ 0.95 → 有 head 的 donor 一次 → JSON → **STOP** |
-| **未见** | 表征 → 并行检索 `hits_emb`+`hits_seq` → `fuse_similarity_views` → `confidence_abstain` → 对 donors `predict_interaction` → 整合 → JSON |
-
-默认来自 Table 3 / `config/defaults.yaml`：`n_cand=5`，`tau_drop=0.30`，近同源 `0.95`，标签切分 `0.75 / 0.50 / 0.25`，供体聚合 `weighted`，对应提案 §4 Σ s·p·c。
-
----
-
-## 配置
-
-默认在 `config/defaults.yaml`：Table 3 的 `n_cand`、`tau_drop`、标签阈值、axes、fusion、abstain、llm、models。`config/evolved.yaml` 仅在离线门禁通过并 promote 后使用。
-
-| 变量 | 用途 |
-|------|------|
-| `BIO_ROOT` | `nanobot-bio` 与 delivery 的父目录 |
-| `DELIVERY_ROOT` | delivery 包根 `rhobind_agent_delivery` |
-| `NANOBOT_SRC` | 仓内精简运行时，默认 `$NANOBOT_BIO_ROOT/nanobot` |
+| `BIO_ROOT` | 本仓与 delivery 的共同父目录 |
+| `DELIVERY_ROOT` | `rhobind_agent_delivery` 根路径 |
+| `NANOBOT_SRC` | 仓内 Nanobot，默认 `$NANOBOT_BIO_ROOT/nanobot` |
 | `NANOBOT_BIO_ROOT` | 本仓根 |
-| `NANOBOT_WORKSPACE` | 默认 `nanobot-bio/workspace` |
-| `NANOBOT_CONFIG` | LLM 配置 `~/.nanobot/config.json` |
-| `RBP_RAW_TOOLS` | `whitelist` / `all` / `none` |
+| `NANOBOT_WORKSPACE` | 默认 `workspace/` |
+| `NANOBOT_CONFIG` | `~/.nanobot/config.json` |
+| `RBP_RAW_TOOLS` | `whitelist` · `all` · `none` |
 | `NANOBOT_TOOL_ALLOW` | ToolLoader 白名单，默认 `rbp` |
-| `RBP_PHMMER` | 设为 `1` 启用可选 phmmer 轴 |
+| `RBP_PHMMER` | `1` 打开 phmmer 轴 |
 | `HF_HOME` / `HF_ENDPOINT` | ESM 权重缓存 / 镜像 |
-| `OMP_NUM_THREADS` | embedding 工具线程上限 |
-| `AGENT_DB` / `RBP_REGISTRY` | delivery setup / App env 注入 |
+| `OMP_NUM_THREADS` | embedding 线程上限 |
 
-LLM：`nanobot-bio onboard` 写入 `~/.nanobot/config.json`。**不要提交真实 API key。**
+Table 3 常用默认：`n_cand=5`，`tau_drop=0.30`，近同源 `0.95`，标签切分 `0.75 / 0.50 / 0.25`，供体聚合 `weighted`。
+
+LLM 用 `nanobot-bio onboard` 写入本地配置。**API key 不得进仓库。**
 
 ---
 
-## 命令
+## 命令与验收
 
-| 命令 | 对象 | 用途 |
+| 命令 | 谁用 | 作用 |
 |------|------|------|
-| `nanobot-bio doctor` | 各方 | 路径、registry、skill sync、axes / AF3 状态 |
-| `nanobot-bio onboard` | 用户 | LLM provider / API key |
-| `nanobot-bio agent` / `chat` | 用户 | 产品主路径，`Nanobot.run` / streamed |
-| `nanobot-bio accept-golden` | Delivery | Own-head 金标，delivery pos RNA × PTBP1 ≈ 0.966 |
-| `nanobot-bio accept-llm` | Delivery | `nanobot_llm` 模式 + 触点证据 |
-| `nanobot-bio gap-closure` | Delivery | Stage-0 / 顺序 fixture 证据包 |
-| `nanobot-bio eval-plan` | Delivery / 科学 | 消融 / 指标协议 |
-| `nanobot-bio evolve` / `evolve-eval` | 科学 | 离线 LOO batch + nested-split evolve |
-| `nanobot-bio promote-evolved` | 科学 | 门禁通过后 promote 候选配置 |
-| `nanobot-bio layout` / `gate` | CI | SoT 布局 + 工程门禁 |
+| `doctor` | 所有人 | 路径 · registry · skill · axes / AF3 |
+| `onboard` | 用户 | 配 provider / key |
+| `agent` / `chat` | 用户 | 产品主路径 |
+| `accept-golden` | Delivery | own-head 金标，PTBP1 × pos ≈ 0.966 |
+| `accept-llm` | Delivery | LLM 触点证据包 |
+| `gap-closure` | Delivery | Stage-0 / 顺序 fixture |
+| `eval-plan` | 科研 | 消融与指标报告 |
+| `evolve` / `evolve-eval` | 科研 | 离线自演进 |
+| `promote-evolved` | 科研 | gate 后晋升配置 |
+| `layout` / `gate` | CI | SoT 与工程门禁 |
 
-报告目录：仓内 `artifacts/reports/`；若环境覆盖则为 `~/.nanobot-bio/artifacts/reports/`。
+报告默认写到 `artifacts/reports/`。协作方验收请走 **`accept-golden`**；delivery 仓内的 `run_example.sh` 只适合单工具排障，不算 app 验收。
 
-**验收权威路径：** `nanobot-bio accept-golden` 面向协作者，包装并扩展 delivery 原生 smoke。`rhobind_agent_delivery/agent/examples/run_example.sh` 是 delivery 内部回归、无 app 层，仅调试单工具时使用。
+Chat 内斜杠：`/help` · `/status` · `/tools` · `/new` · `/clear` · `/thinking` · `/onboard` · `/quit`
 
-### Chat 斜杠命令
-
-| 命令 | 用途 |
-|------|------|
-| `/help` | 查看帮助 |
-| `/status` | 当前模型、工具、会话 |
-| `/tools` | 列出已注册工具 |
-| `/new` | 开启新会话 |
-| `/clear` | 清屏 |
-| `/thinking` | 切换思考可见性 |
-| `/onboard` | 重新配置 LLM |
-| `/quit` | 退出 |
-
----
-
-## 范围与边界
-
-| 本仓范围 | 非本仓范围 |
-|----------|------------|
-| Agent CLI、skill、策展工具、delivery **桥** | 修改 `rhobind_agent_delivery/` 源码、权重、registry |
-| 离线评测 / 演进 `rbp_eval/` | 在线写权重；编造 `p_hat` / `prob` |
-| JSON verdict + Stage 守卫 | registry 未收录的 Delivery v2：校准、motif、saliency、HDOCK |
-| LLM 规划 + 有据解释 | 无校准工具与 ECE 证据时宣称校准 P(bind) |
+### 字段口径
 
 | 字段 | 本产品含义 |
-|------|-----------|
-| `p_hat` | 预测器 / `similarity_weighted_vote` 原始分，不是 Delivery v2 校准概率。 |
-| `confidence` | 规则 + Stage-3 checklist 及相关 flags，不是校准 P(bind)。 |
-| `label` | `Strong` / `Likely` / `Unlikely` / `No`，Table 3 对 `p_hat` 切分，默认 0.75 / 0.50 / 0.25。 |
+|------|------------|
+| `p_hat` | predictor / `similarity_weighted_vote` 的 raw score |
+| `confidence` | 规则 + Stage-3 checklist，不是校准概率 |
+| `label` | `Strong` · `Likely` · `Unlikely` · `No` |
 
 ---
 
-## 测试
+## 测试与排错
 
 ```bash
 python -m pytest -q
+# 基线：120 passed
+
+pytest tests/test_proposal_compliance.py \
+       tests/test_stage_contract.py \
+       tests/test_section4_fidelity.py -q
 ```
 
-当前基线：`120 passed`。
-
-合规门禁：
-
-```bash
-pytest tests/test_proposal_compliance.py -q
-pytest tests/test_stage_contract.py -q
-pytest tests/test_section4_fidelity.py -q
-```
-
----
-
-## 排错
-
-```bash
-nanobot-bio doctor
-```
+先跑 `nanobot-bio doctor`，再对症处理：
 
 | 现象 | 处理 |
 |------|------|
 | Config missing | `nanobot-bio onboard` |
-| `DELIVERY_ROOT` 缺失 | 检查同级 `rhobind_agent_delivery` 或设置环境变量 |
-| `NANOBOT_SRC` 缺失 | 期望仓内 `nanobot-bio/nanobot/` |
-| skill 不同步 | `python -m app.sync_overlay` 或 `nanobot-bio doctor` |
-| `import nanobot` 指向兄弟仓 / site-packages | 卸载 `nanobot-ai`，`pip install -e .`，`NANOBOT_BIO_ROOT` 置于 `PYTHONPATH` 最前 |
-| AF3 探针失败 | 见 `.af3_status`；回退 AFDB / 序列轴并记 caveat |
-| ESM killed / OOM `rc=-9` | 提高 `protein_embed` 的 cgroup 内存；`HF_HOME` 指向本地权重 |
-| LLM API key 缺失 | `nanobot-bio onboard` |
+| `DELIVERY_ROOT` 找不到 | 检查同级 delivery，或显式 export |
+| `import nanobot` 指到旁路包 | 卸掉 `nanobot-ai`，`pip install -e .` |
+| skill 不同步 | `python -m app.sync_overlay` |
+| AF3 探针失败 | 记 caveat，回退 AFDB / 序列轴 |
+| ESM OOM `rc=-9` | 提高 `protein_embed` 内存，设置 `HF_HOME` |
 
 ---
 
-## 文档
+## 文档索引
 
-| 文档 | 职责 |
+| 文档 | 用途 |
 |------|------|
-| [INSTALL.md](INSTALL.md) | 安装 / 环境 / 验收 |
-| [AGENTS.md](AGENTS.md) | Agent 与 CI 门禁 |
-| [RELEASE.md](RELEASE.md) | 发版流程 |
-| [CHANGELOG.md](CHANGELOG.md) | 变更历史 — 当前 tag **v0.5.1** |
-| [VENDOR.md](VENDOR.md) | Slim vendor 维护笔记 |
+| [INSTALL.md](INSTALL.md) | 安装、环境变量、验收流程 |
+| [AGENTS.md](AGENTS.md) | Agent / CI 硬约束 |
+| [RELEASE.md](RELEASE.md) | 发版步骤 |
+| [CHANGELOG.md](CHANGELOG.md) | 变更记录 · 当前 **v0.5.1** |
+| [VENDOR.md](VENDOR.md) | slim Nanobot 维护说明 |
 | [README.md](README.md) | English |
 
+本地 `docs/` 含提案与工程指南副本，**不推送 GitHub**，需要时在协作方之间单独分发。
+
 ---
 
-## 致谢
+<div align="center">
 
-精简 Agent Controller 源自 [Nanobot](https://github.com/HKUDS/nanobot)，vendored 于 `nanobot/`，已去掉 channels / WebUI。科学预测器与 ready 工具来自 `rhobind_agent_delivery`，经只读桥接入。本仓不修改 delivery 源码、权重或 registry。
+**致谢**
+
+Controller 源自 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)，本仓以 slim 形式放在 `nanobot/`。<br/>
+Predictor 与 ready tools 来自 `rhobind_agent_delivery`，经只读 bridge 接入。<br/>
+本仓库不修改 delivery 的源码、权重或 registry。
+
+</div>
