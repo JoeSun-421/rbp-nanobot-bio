@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Locate toolkit SoT (skills + tools/rbp) for overlay sync.
+"""Locate toolkit SoT (skills + tools/rbp).
 
 Single source of truth: ``nanobot/`` under ``NANOBOT_BIO_ROOT``
-(Proposal §6.2 layout; synced into ``$NANOBOT_SRC``).
+(Proposal §6.2). After slim-vendor, this tree *is* the runtime.
 """
 
 from __future__ import annotations

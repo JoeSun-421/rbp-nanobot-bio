@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""RBP Agent App — product surface (CLI, bridge, SoT sync).
+"""Product shell — CLI, delivery bridge, agent assembly (``app.agent.RBPAgent``).
 
-Plugin SoT remains at repo-root ``nanobot/`` (not merged here).
+Runtime / toolkit SoT: repo-root ``nanobot/``. Prefer ``app.agent`` over legacy
+``app.integrate``. CLI groups: ``app.cli.{user,accept,eval_cmds,maint}``.
 """
 
 from __future__ import annotations

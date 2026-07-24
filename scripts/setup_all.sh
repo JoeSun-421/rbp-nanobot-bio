@@ -36,107 +36,37 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIO_ROOT="$(cd "${BIO_ROOT:-$AGENT_ROOT/..}" && pwd)"
 DELIVERY_ROOT="${DELIVERY_ROOT:-$BIO_ROOT/rhobind_agent_delivery}"
-NANOBOT_SRC="${NANOBOT_SRC:-$BIO_ROOT/nanobot}"
+NANOBOT_SRC="${NANOBOT_SRC:-$AGENT_ROOT/nanobot}"
 export BIO_ROOT NANOBOT_SRC DELIVERY_ROOT
 export NANOBOT_BIO_ROOT="$AGENT_ROOT"
 export NANOBOT_WORKSPACE="$AGENT_ROOT/workspace"
 
 # ---------------------------------------------------------------------------
-# Inline: ensure sibling nanobot runtime (clone HKUDS/nanobot if missing)
+# Inline: ensure in-repo slim nanobot runtime (no sibling clone)
 # ---------------------------------------------------------------------------
 _ensure_nanobot() {
-  local NANOBOT_GIT_DEFAULT="https://github.com/HKUDS/nanobot.git"
-  local NANOBOT_GIT="${NANOBOT_GIT:-$NANOBOT_GIT_DEFAULT}"
-  local NANOBOT_CLONE_TIMEOUT="${NANOBOT_CLONE_TIMEOUT:-180}"
-  NANOBOT_SRC="${NANOBOT_SRC:-$BIO_ROOT/nanobot}"
-
+  NANOBOT_SRC="${NANOBOT_SRC:-$AGENT_ROOT/nanobot}"
   case "$NANOBOT_SRC" in
-    *"nanobot-bio/nanobot"|*"nanobot-bio/nanobot/")
-      if [[ ! -f "$NANOBOT_SRC/nanobot.py" && ! -f "$NANOBOT_SRC/pyproject.toml" ]]; then
-        NANOBOT_SRC="$BIO_ROOT/nanobot"
-      fi
+    *"nanobot-bio/nanobot"|*"nanobot-bio/nanobot/"|"$AGENT_ROOT/nanobot")
+      ;;
+    *)
+      echo "[ensure_nanobot] overriding NANOBOT_SRC=$NANOBOT_SRC → $AGENT_ROOT/nanobot (slim vendor)" >&2
+      NANOBOT_SRC="$AGENT_ROOT/nanobot"
       ;;
   esac
-
-  _nanobot_ok() {
-    local d="$1"
-    [[ -f "$d/__init__.py" || -f "$d/nanobot.py" || -f "$d/pyproject.toml" ]]
-  }
-
-  if _nanobot_ok "$NANOBOT_SRC"; then
-    echo "[ensure_nanobot] OK: $NANOBOT_SRC"
-    export NANOBOT_SRC
-    return 0
-  fi
-
-  if [[ "${NANOBOT_NO_CLONE:-0}" == "1" ]]; then
-    echo "ERROR: nanobot runtime missing at $NANOBOT_SRC (NANOBOT_NO_CLONE=1)" >&2
+  if [[ ! -f "$NANOBOT_SRC/__init__.py" && ! -f "$NANOBOT_SRC/nanobot.py" ]]; then
+    echo "ERROR: in-repo nanobot missing at $NANOBOT_SRC" >&2
+    echo "  Expected slim vendor tree under nanobot-bio/nanobot/ (Proposal §6.2)." >&2
     return 1
   fi
-  if ! command -v git >/dev/null 2>&1; then
-    echo "ERROR: git required to clone nanobot into $NANOBOT_SRC" >&2
+  if [[ ! -d "$NANOBOT_SRC/agent/tools/rbp" ]]; then
+    echo "ERROR: missing agent/tools/rbp under $NANOBOT_SRC" >&2
     return 1
   fi
-
-  if [[ -e "$NANOBOT_SRC" ]]; then
-    if [[ -d "$NANOBOT_SRC" ]] && [[ -z "$(ls -A "$NANOBOT_SRC" 2>/dev/null || true)" ]]; then
-      rmdir "$NANOBOT_SRC" 2>/dev/null || true
-    elif [[ -d "$NANOBOT_SRC" ]] && ! _nanobot_ok "$NANOBOT_SRC"; then
-      if [[ -d "$NANOBOT_SRC/skills/rbp-agent" || -d "$NANOBOT_SRC/agent/tools/rbp" ]]; then
-        echo "ERROR: $NANOBOT_SRC looks like a plugin overlay, not the nanobot runtime." >&2
-        echo "  Set NANOBOT_SRC=\$BIO_ROOT/nanobot (sibling) and re-run." >&2
-        return 1
-      fi
-      echo "WARN: incomplete nanobot at $NANOBOT_SRC — moving aside" >&2
-      mv "$NANOBOT_SRC" "${NANOBOT_SRC}.bak.$(date +%s)"
-    fi
+  if [[ -d "$NANOBOT_SRC/channels" || -d "$NANOBOT_SRC/webui" ]]; then
+    echo "WARN: personal-assistant surface still present under $NANOBOT_SRC (expected stripped)" >&2
   fi
-
-  local _urls=()
-  _urls+=("$NANOBOT_GIT")
-  if [[ "$NANOBOT_GIT" == "$NANOBOT_GIT_DEFAULT" ]]; then
-    _urls+=(
-      "https://ghproxy.net/https://github.com/HKUDS/nanobot.git"
-      "https://mirror.ghproxy.com/https://github.com/HKUDS/nanobot.git"
-      "https://gitclone.com/github.com/HKUDS/nanobot.git"
-    )
-  fi
-
-  mkdir -p "$(dirname "$NANOBOT_SRC")"
-  local _cloned=0 _url _ok
-  export GIT_TERMINAL_PROMPT=0
-  for _url in "${_urls[@]}"; do
-    echo "[ensure_nanobot] cloning (${NANOBOT_CLONE_TIMEOUT}s) $_url → $NANOBOT_SRC"
-    rm -rf "$NANOBOT_SRC"
-    _ok=0
-    if command -v timeout >/dev/null 2>&1; then
-      if timeout -k 8 "$NANOBOT_CLONE_TIMEOUT" \
-        git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 \
-        clone --depth 1 "$_url" "$NANOBOT_SRC"
-      then
-        _ok=1
-      fi
-    else
-      if git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 \
-        clone --depth 1 "$_url" "$NANOBOT_SRC"
-      then
-        _ok=1
-      fi
-    fi
-    if [[ "$_ok" == "1" ]] && _nanobot_ok "$NANOBOT_SRC"; then
-      _cloned=1
-      break
-    fi
-    echo "[ensure_nanobot] WARN: clone failed/timeout for $_url" >&2
-    rm -rf "$NANOBOT_SRC"
-  done
-
-  if [[ "$_cloned" != "1" ]] || ! _nanobot_ok "$NANOBOT_SRC"; then
-    echo "ERROR: could not clone nanobot runtime into $NANOBOT_SRC" >&2
-    echo "  Manual: git clone --depth 1 https://github.com/HKUDS/nanobot.git $NANOBOT_SRC" >&2
-    return 1
-  fi
-  echo "[ensure_nanobot] cloned OK: $NANOBOT_SRC"
+  echo "[ensure_nanobot] OK (in-repo): $NANOBOT_SRC"
   export NANOBOT_SRC
   return 0
 }
@@ -303,7 +233,7 @@ NANOBOT_SRC="${NANOBOT_SRC}"
 export NANOBOT_SRC
 
 echo "=============================================="
-echo " nanobot-bio setup (Linux / plugin overlay)"
+echo " nanobot-bio setup (Linux / slim in-repo nanobot)"
 echo "=============================================="
 echo "  BIO_ROOT      = $BIO_ROOT"
 echo "  AGENT_ROOT    = $AGENT_ROOT"
@@ -446,34 +376,24 @@ fi
 echo "  pip install -r requirements.lock (pinned runtime)"
 python -m pip install -r "$AGENT_ROOT/requirements.lock"
 
-echo "  install nanobot deps + .pth (flat layout; avoid pip -e)"
-mapfile -t _NB_DEPS < <(python - <<PY
-import tomllib
-from pathlib import Path
-p = Path(r"$NANOBOT_SRC") / "pyproject.toml"
-for d in tomllib.loads(p.read_text()).get("project", {}).get("dependencies", []):
-    print(d)
-PY
-)
-if ((${#_NB_DEPS[@]})); then
-  python -m pip install "${_NB_DEPS[@]}"
-fi
+echo "  install nanobot-bio (includes in-repo slim nanobot) ..."
+# Drop legacy PyPI nanobot-ai / sibling .pth that would shadow in-repo package
+python -m pip uninstall -y nanobot-ai nanobot 2>/dev/null || true
 _SITE="$(python -c 'import site; print(site.getsitepackages()[0])')"
-echo "$(cd "$NANOBOT_SRC/.." && pwd)" > "$_SITE/_nanobot_src.pth"
-rm -f "$_SITE"/__editable__.nanobot-*.pth \
+rm -f "$_SITE"/_nanobot_src.pth \
+  "$_SITE"/__editable__.nanobot-*.pth \
   "$_SITE"/__editable___nanobot_*_finder.py 2>/dev/null || true
-(cd "$BIO_ROOT" && python -c "
+export NANOBOT_SRC="$AGENT_ROOT/nanobot"
+export NANOBOT_BIO_ROOT="$AGENT_ROOT"
+export NANOBOT_WORKSPACE="$AGENT_ROOT/workspace"
+python -m pip install -e "${AGENT_ROOT}[dev]"
+python -c "
 import nanobot
 from nanobot.agent.tools.base import Tool
 p = (nanobot.__file__ or '').replace('\\\\', '/')
 print('  nanobot OK', p)
-assert '/nanobot-bio/' not in p, p
-assert p.endswith('__init__.py') or '/nanobot/' in p, p
-")
-
-echo "  sync plugin overlay into nanobot runtime ..."
-export NANOBOT_SRC NANOBOT_BIO_ROOT="$AGENT_ROOT" NANOBOT_WORKSPACE="$AGENT_ROOT/workspace"
-python -m pip install -e "${AGENT_ROOT}[dev]" -q || python -m pip install -e "$AGENT_ROOT" -q
+assert 'nanobot-bio' in p, p
+"
 python -m app.sync_overlay
 python -c "from nanobot.agent.tools.rbp.predict import PredictInteractionTool; print('  nanobot.agent.tools.rbp OK', PredictInteractionTool)"
 

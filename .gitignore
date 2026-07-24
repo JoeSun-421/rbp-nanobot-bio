@@ -35,6 +35,9 @@ config/evolved.candidate.yaml
 
 # Local-only docs — never commit / push to GitHub (keep on the machine only)
 docs/
+# Ignore other assets; keep README logo trackable
+assets/*
+!assets/nanobot_logo.png
 
 # Proposal binaries (do not require in-repo)
 RNA_RBP_Agent_Proposal.docx

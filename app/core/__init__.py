@@ -7,7 +7,8 @@ Kept:
   - ``verdict_schema`` — verdict JSON normalize/validate
 
 Eval-only fusion helpers live under ``rbp_eval``. The fixed ``pipeline``
-module was removed — product path is ``app.integrate.RBPAgent`` → ``Nanobot.run``.
+module was removed — product path is ``app.agent.RBPAgent`` → ``Nanobot.run``
+(``app.integrate`` remains a thin re-export).
 """
 
 from __future__ import annotations

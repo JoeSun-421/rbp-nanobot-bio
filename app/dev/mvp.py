@@ -100,7 +100,8 @@ def main() -> int:
             "rbp_eval/evaluator.py",
             "rbp_eval/proxy_cache.py",
             "app/core/paths.py",
-            "app/cli.py",
+            "app/cli/__init__.py",
+            "app/agent.py",
             "nanobot/agent/tools/rbp/predict.py",
             "nanobot/skills/rbp-agent/SKILL.md",
             "artifacts",
@@ -111,18 +112,22 @@ def main() -> int:
     else:
         c.fail("missing SoT layout pieces")
 
-    c = add("A", "plugin overlay has no nested framework")
-    forbidden = ("providers", "channels", "webui", "__init__.py", "nanobot.py")
+    c = add("A", "slim in-repo nanobot (framework + rbp SoT)")
+    required = ("providers", "__init__.py", "nanobot.py", "agent", "sdk", "session")
+    forbidden = ("channels", "webui", "web", "cli", "audio", "bridge", "gateway")
+    missing = [n for n in required if not (ROOT / "nanobot" / n).exists()]
     bad = [n for n in forbidden if (ROOT / "nanobot" / n).exists()]
-    if bad:
-        c.fail(f"overlay still has framework paths: {bad}")
+    if missing:
+        c.fail(f"slim runtime missing: {missing}")
+    elif bad:
+        c.fail(f"personal-assistant surface still present: {bad}")
     else:
         try:
             import nanobot as _nb
 
             _f = str(getattr(_nb, "__file__", "") or "").replace("\\", "/")
-            if "nanobot-bio/" in _f:
-                c.fail(f"import nanobot shadowed by overlay: {_f}")
+            if "nanobot-bio" not in _f:
+                c.fail(f"import nanobot must be in-repo, got: {_f}")
             else:
                 c.pass_(_f)
         except Exception as e:
@@ -130,7 +135,7 @@ def main() -> int:
 
     c = add("A", "integrate.RBPAgent")
     try:
-        from app.integrate import RBPAgent, skill_path
+        from app.agent import RBPAgent, skill_path
 
         c.pass_(f"skill={skill_path()}")
     except Exception as e:
@@ -290,7 +295,7 @@ def main() -> int:
     c = add("F", "Nanobot.from_config().run (primary agent path)")
     try:
         from app.backends.delivery.examples import own_head_prompt
-        from app.integrate import RBPAgent
+        from app.agent import RBPAgent
 
         agent = RBPAgent(
             offline=False,

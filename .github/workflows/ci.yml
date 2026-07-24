@@ -22,29 +22,17 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Checkout Nanobot runtime
-        uses: actions/checkout@v4
-        with:
-          repository: HKUDS/nanobot
-          path: _runtime_nanobot
-          fetch-depth: 1
-
-      - name: Install App + Nanobot runtime + sync RBP overlay
+      - name: Install App (slim in-repo nanobot)
         env:
           NANOBOT_BIO_ROOT: ${{ github.workspace }}
+          NANOBOT_SRC: ${{ github.workspace }}/nanobot
         run: |
           python -m pip install -U pip setuptools wheel
           pip install -r requirements.lock
+          # Ensure no legacy nanobot-ai shadows in-repo package
+          pip uninstall -y nanobot-ai nanobot 2>/dev/null || true
           pip install -e ".[dev]"
-          # Install the nanobot runtime (provides nanobot.agent.tools.base etc.)
-          # nanobot-ai declares its own deps (pydantic-settings, mcp, tiktoken, …)
-          # that are not all in the lock; installing with deps lets pip resolve the
-          # full transitive set. The shared deps already pinned in the lock
-          # (httpx/openai/pydantic/loguru/…) satisfy nanobot-ai 0.2.2, so pip only
-          # adds the missing ones — no upgrades to locked versions.
-          pip install nanobot-ai==0.2.2
-          # Mirror the SoT RBP tool overlay into the imported nanobot package so
-          # pytest can import nanobot.agent.tools.rbp.* (turn_guards, stage_contract, …)
+          python -c "import nanobot; p=nanobot.__file__; print(p); assert 'nanobot-bio' in p.replace(chr(92),'/') or 'github/workspace' in p.replace(chr(92),'/') or '/nanobot/' in p"
           python -m app.sync_overlay
 
       - name: Secret scan
@@ -54,19 +42,16 @@ jobs:
         run: ruff check app rbp_eval tests
 
       - name: Pytest
+        env:
+          NANOBOT_BIO_ROOT: ${{ github.workspace }}
+          NANOBOT_SRC: ${{ github.workspace }}/nanobot
         run: pytest -q
 
-      - name: Layout (SoT + Runtime import)
+      - name: Layout (in-repo slim runtime)
         env:
-          BIO_ROOT: ${{ github.workspace }}/_bio_root
-          NANOBOT_SRC: ${{ github.workspace }}/_runtime_nanobot
           NANOBOT_BIO_ROOT: ${{ github.workspace }}
-        run: |
-          mkdir -p "$BIO_ROOT"
-          ln -sfn "$NANOBOT_SRC" "$BIO_ROOT/nanobot"
-          ln -sfn "$GITHUB_WORKSPACE" "$BIO_ROOT/nanobot-bio"
-          export PYTHONPATH="$BIO_ROOT:$GITHUB_WORKSPACE${PYTHONPATH:+:$PYTHONPATH}"
-          rbp-agent layout
+          NANOBOT_SRC: ${{ github.workspace }}/nanobot
+        run: rbp-agent layout
 
       - name: Note — own-head / light eval skipped on public CI
         run: |
@@ -74,23 +59,14 @@ jobs:
           echo "Run locally: bash scripts/ci_gate.sh"
           echo "Or: rbp-agent gate"
 
-  # ---------------------------------------------------------------------------
-  # Science acceptance — runs on a self-hosted runner with delivery bundle +
-  # conda envs (GPU optional). Triggered on tags and manual dispatch only, so
-  # regular pushes/PRs stay green via the `test` job above (no runner → these
-  # jobs would queue indefinitely).
-  # Add a self-hosted runner labeled `self-hosted, linux, science` and set the
-  # repo secret DELIVERY_BUNDLE_PATH (absolute path to rhobind_agent_delivery
-  # on the runner host) to enable.
-  # ---------------------------------------------------------------------------
   science:
     if: github.repository == 'JoeSun-421/rbp-nanobot-bio' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, linux, science]
     timeout-minutes: 60
     env:
       BIO_ROOT: ${{ github.workspace }}/_bio_root
-      NANOBOT_SRC: ${{ github.workspace }}/_runtime_nanobot
       NANOBOT_BIO_ROOT: ${{ github.workspace }}
+      NANOBOT_SRC: ${{ github.workspace }}/nanobot
       DELIVERY_ROOT: ${{ secrets.DELIVERY_BUNDLE_PATH }}
       NANOBOT_CONFIG: ${{ secrets.NANOBOT_CONFIG_PATH }}
       RHOBIND_DEVICE: ${{ vars.RHOBIND_DEVICE || 'auto' }}
@@ -98,17 +74,9 @@ jobs:
       - name: Checkout App
         uses: actions/checkout@v4
 
-      - name: Checkout Nanobot runtime
-        uses: actions/checkout@v4
-        with:
-          repository: HKUDS/nanobot
-          path: _runtime_nanobot
-          fetch-depth: 1
-
       - name: Link BIO_ROOT layout
         run: |
           mkdir -p "$BIO_ROOT"
-          ln -sfn "$NANOBOT_SRC" "$BIO_ROOT/nanobot"
           ln -sfn "$GITHUB_WORKSPACE" "$BIO_ROOT/nanobot-bio"
           echo "DELIVERY_ROOT=$DELIVERY_ROOT"
           test -d "$DELIVERY_ROOT/agent" || { echo "DELIVERY_BUNDLE_PATH invalid"; exit 1; }
@@ -122,15 +90,11 @@ jobs:
         run: |
           python -m pip install -U pip setuptools wheel
           pip install -r requirements.lock
+          pip uninstall -y nanobot-ai nanobot 2>/dev/null || true
           pip install -e ".[dev]"
-          # expose sibling nanobot runtime to venv
-          SITE=$(python -c 'import site; print(site.getsitepackages()[0])')
-          echo "$(dirname "$NANOBOT_SRC")" > "$SITE/_nanobot_src.pth"
-          pip install -e "$NANOBOT_SRC" || true
+          python -c "import nanobot; print(nanobot.__file__)"
 
-      - name: Sync plugin overlay
-        env:
-          PYTHONPATH: "$BIO_ROOT:$GITHUB_WORKSPACE${PYTHONPATH:+:$PYTHONPATH}"
+      - name: Sync workspace skill links
         run: python -m app.sync_overlay
 
       - name: Engineering gate (ruff + pytest + layout + optional LOO)
@@ -154,21 +118,14 @@ jobs:
             artifacts/reports/
             artifacts/traces/
 
-  # ---------------------------------------------------------------------------
-  # B5: Evaluation job — runs the ablation + ECE protocol on tag releases.
-  # Triggered on version tags (v*) and manual dispatch. Produces
-  # evaluation_plan_report.{json,md} + loo_report.{json,md} with the Stage-3
-  # de-LLM-explanation ablation (A4) and instance ECE (A5) when labels are
-  # available; otherwise runs the light (transfer-CSV) protocol.
-  # ---------------------------------------------------------------------------
   eval:
     if: github.repository == 'JoeSun-421/rbp-nanobot-bio' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, linux, science]
     timeout-minutes: 90
     env:
       BIO_ROOT: ${{ github.workspace }}/_bio_root
-      NANOBOT_SRC: ${{ github.workspace }}/_runtime_nanobot
       NANOBOT_BIO_ROOT: ${{ github.workspace }}
+      NANOBOT_SRC: ${{ github.workspace }}/nanobot
       DELIVERY_ROOT: ${{ secrets.DELIVERY_BUNDLE_PATH }}
       NANOBOT_CONFIG: ${{ secrets.NANOBOT_CONFIG_PATH }}
       RHOBIND_DEVICE: ${{ vars.RHOBIND_DEVICE || 'auto' }}
@@ -176,17 +133,9 @@ jobs:
       - name: Checkout App
         uses: actions/checkout@v4
 
-      - name: Checkout Nanobot runtime
-        uses: actions/checkout@v4
-        with:
-          repository: HKUDS/nanobot
-          path: _runtime_nanobot
-          fetch-depth: 1
-
       - name: Link BIO_ROOT layout
         run: |
           mkdir -p "$BIO_ROOT"
-          ln -sfn "$NANOBOT_SRC" "$BIO_ROOT/nanobot"
           ln -sfn "$GITHUB_WORKSPACE" "$BIO_ROOT/nanobot-bio"
           test -d "$DELIVERY_ROOT/agent" || { echo "DELIVERY_BUNDLE_PATH invalid"; exit 1; }
 
@@ -199,22 +148,14 @@ jobs:
         run: |
           python -m pip install -U pip setuptools wheel
           pip install -r requirements.lock
+          pip uninstall -y nanobot-ai nanobot 2>/dev/null || true
           pip install -e ".[dev]"
-          SITE=$(python -c 'import site; print(site.getsitepackages()[0])')
-          echo "$(dirname "$NANOBOT_SRC")" > "$SITE/_nanobot_src.pth"
-          pip install -e "$NANOBOT_SRC" || true
 
-      - name: Sync plugin overlay
-        env:
-          PYTHONPATH: "$BIO_ROOT:$GITHUB_WORKSPACE${PYTHONPATH:+:$PYTHONPATH}"
+      - name: Sync workspace skill links
         run: python -m app.sync_overlay
 
       - name: Evaluation Plan (light + ablation + ECE)
         run: |
-          # A4/A5/B4: light transfer-CSV protocol; --no-llm-explanation records the
-          # Stage-3 de-LLM ablation when label fixtures are present under
-          # artifacts/eval/ (no_llm.json, full_llm.json). Missing fixtures → the
-          # ablation block reports `skipped` but the run still succeeds.
           LABELS=""
           LLM=""
           if [ -f artifacts/eval/no_llm.json ]; then LABELS="--labels artifacts/eval/no_llm.json"; fi

@@ -20,8 +20,9 @@ def test_layout_proposal_paths():
     assert (ROOT / "rbp_eval" / "proxy_cache.py").is_file()
     assert (ROOT / "rbp_eval" / "nanobot_hooks.py").is_file()
     assert (ROOT / "app" / "backends" / "delivery" / "client.py").is_file()
-    assert (ROOT / "app" / "cli.py").is_file()
-    assert (ROOT / "app" / "integrate.py").is_file()
+    assert (ROOT / "app" / "cli" / "__init__.py").is_file()
+    assert (ROOT / "app" / "agent.py").is_file()
+    assert (ROOT / "app" / "integrate.py").is_file()  # compat re-export → app.agent
     assert not (ROOT / "cli.py").exists()
     assert not (ROOT / "integrate.py").exists()
     # Removed shims / obsolete product dirs / fixed pipeline

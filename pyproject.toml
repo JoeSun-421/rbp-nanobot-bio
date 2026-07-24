@@ -1,7 +1,7 @@
 [project]
 name = "nanobot-bio"
 version = "0.5.1"
-description = "RBP Agent App: nanobot-bio CLI + nanobot SoT + delivery bridge"
+description = "RBP Agent App: slim in-repo nanobot + delivery bridge"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
   "pyyaml>=6.0",
   "pydantic>=2.0",
+  "pydantic-settings>=2.0",
   "numpy>=1.24",
   "loguru>=0.7",
   "typer>=0.12",
@@ -33,6 +34,11 @@ dependencies = [
   "prompt_toolkit>=3.0",
   "openai>=1.0",
   "dulwich>=0.21",
+  # Slim in-repo nanobot runtime
+  "httpx>=0.28",
+  "jinja2>=3.1",
+  "json-repair>=0.30",
+  "tiktoken>=0.7",
 ]
 
 [project.urls]
@@ -48,13 +54,10 @@ dev = [
   "ruff>=0.6",
 ]
 af3 = [
-  # AF3 harden pins (install only if you build the af3 conda env). See INSTALL.md.
   "jax>=0.4",
   "triton>=2.0",
 ]
 science = [
-  # Convenience extra pulling the app-side pins needed when driving the
-  # delivery science stack from the same venv (rare; prefer conda envs).
   "numpy>=1.24",
   "pyyaml>=6.0",
 ]
@@ -67,14 +70,17 @@ rbp-agent = "app.cli:main"
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
-# Product packages. Toolkit SoT is repo-root nanobot/ (Proposal §6.2; synced into $NANOBOT_SRC).
-# Do not install overlay nanobot/ as a Python package (would shadow the framework).
+# Slim vendor: install in-repo nanobot/ as the framework package (Proposal §6.2).
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*", "rbp_eval*"]
+include = ["app*", "rbp_eval*", "nanobot*"]
 
 [tool.setuptools.package-data]
 app = ["backends/delivery/*.yaml", "backends/delivery/*.yml", "backends/delivery/*.sh"]
+nanobot = [
+  "templates/**/*",
+  "skills/**/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,9 +1,8 @@
 # 安装指南（协作方入门）
 
-> 本文件是面向**新协作方**的单一入门。涵盖三条安装路径、完整环境变量表、数据获取与验收流程。
-> 仓库 README 是产品概览；本文件聚焦"如何把它跑起来"。
+> **安装 / 环境 / 验收的单一入口。** 产品概览见 [README.zh.md](README.zh.md) / [README.md](README.md)；Agent 门禁见 [AGENTS.md](AGENTS.md)；发版见 [RELEASE.md](RELEASE.md)；slim vendor 笔记见 [VENDOR.md](VENDOR.md)。
 
-**English** | [中文](INSTALL.zh.md)（本文件即中文版，英文版待补）
+（本文为中文。英文读者可按代码块与表格操作；完整英文版未单独维护。）
 
 ---
 
@@ -13,7 +12,7 @@
 |----|------|------|
 | OS | Linux x86_64（Ubuntu 20.04+ 验证通过） | macOS/WSL 可跑 agent 层，科学栈未验证 |
 | 磁盘 | ≥ 30 GB 空闲 | delivery bundle ~15 GB；conda 科学栈 ~10 GB |
-| Python | ≥ 3.10（agent 层）；nanobot 运行时需 ≥ 3.13 | 见路径说明 |
+| Python | ≥ 3.10（推荐 3.13） | 仓内精简 nanobot 与本机 venv 同解释器 |
 | conda / mamba | full 路径必需；agent 路径可选 | 推荐 mamba 加速 |
 | GPU | 可选 | rhobind_predict / ESM / AF3 受益；CPU 可跑 doctor + chat |
 | LLM API key | `agent` / `chat` / `accept-llm` 必需 | 通过 `nanobot-bio onboard` 配置 |
@@ -40,7 +39,7 @@ nanobot-bio onboard                  # 配置 LLM provider + key
 nanobot-bio doctor                   # 自检
 ```
 
-`setup_all.sh` 会自动 clone 上游 nanobot 运行时到 `$BIO_ROOT/nanobot`（可用 `NANOBOT_NO_CLONE=1` 禁止）。
+`setup_all.sh` 使用仓内精简 `nanobot/`（不再 clone 兄弟 `$BIO_ROOT/nanobot`）。`pip install -e .` 会安装 in-repo 包；勿再安装 `nanobot-ai`（会抢 `import nanobot`）。
 
 ### 路径 B：Docker（隔离环境，推荐给只跑不开发的协作方）
 
@@ -68,23 +67,18 @@ docker compose up app                # = nanobot-bio chat
 cd rhobind_agent_delivery
 bash agent/setup_envs.sh             # protein_embed / rna / rhobind / af3
 
-# 2. nanobot 运行时（需 Python ≥ 3.13）
-git clone --depth 1 https://github.com/HKUDS/nanobot.git ../nanobot
-
-# 3. agent venv
+# 2. agent venv（仓内已含精简 nanobot/）
 cd ../nanobot-bio
-python3.13 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.lock
+pip uninstall -y nanobot-ai nanobot 2>/dev/null || true
 pip install -e ".[dev]"
 
-# 4. 让 venv 看见 sibling nanobot（写 .pth）
-SITE=$(python -c 'import site; print(site.getsitepackages()[0])')
-echo "$(cd .. && pwd)" > "$SITE/_nanobot_src.pth"
-
-# 5. 同步插件 overlay + 写 .env
+# 3. 校验 import 指向本仓 + workspace skill 链接
+python -c "import nanobot; print(nanobot.__file__)"   # 必须含 nanobot-bio/nanobot
 python -m app.sync_overlay
-cp .env.example .env                # 按需编辑
+cp .env.example .env                # 按需编辑；NANOBOT_SRC 默认本仓 nanobot/
 nanobot-bio doctor
 ```
 
@@ -98,7 +92,7 @@ nanobot-bio doctor
 |------|------|------|------|
 | `BIO_ROOT` | `nanobot-bio/..` | 否 | 仓库父目录 |
 | `DELIVERY_ROOT` | `$BIO_ROOT/rhobind_agent_delivery` | 是* | delivery 包根 |
-| `NANOBOT_SRC` | `$BIO_ROOT/nanobot` | 是* | nanobot 运行时 |
+| `NANOBOT_SRC` | `$NANOBOT_BIO_ROOT/nanobot` | 是* | 仓内精简 nanobot 运行时（SoT == runtime） |
 | `NANOBOT_BIO_ROOT` | `nanobot-bio/` | 否 | app 包根 |
 | `NANOBOT_WORKSPACE` | `$NANOBOT_BIO_ROOT/workspace` | 否 | nanobot 工作区 |
 | `NANOBOT_CONFIG` | `~/.nanobot/config.json` | 是** | LLM 配置（含 key） |
