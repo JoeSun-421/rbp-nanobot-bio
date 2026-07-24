@@ -89,11 +89,11 @@ Acceptance commands are top-level CLI (`accept-golden`, `accept-llm`, `gap-closu
 |------|--------|
 | **Catalogue (Stage 0)** | `resolve_rbp` → if `in_panel` → `predict_interaction` once → JSON → **STOP** |
 | **Near-known** | `check_near_known` (seq identity ≥ 0.95) → headed donor once → JSON → **STOP** |
-| **Unseen** | characterize → parallel retrieve (`hits_emb`+`hits_seq`, …) → `fuse_similarity_views` → **`confidence_abstain`** → `predict_interaction` on donors → integrate (`transfer_prior` / `donor_quality` / `similarity_weighted_vote`) → JSON |
+| **Unseen** | characterize → parallel retrieve (`hits_emb`+`hits_seq`, …) → `fuse_similarity_views` → **`confidence_abstain`** → `predict_interaction` on donors → integrate (`transfer_pri[...]
 
 Defaults (Table 3 / `config/defaults.yaml`): `n_cand=5`, `tau_drop=0.30`, near-match `0.95`, label cuts `0.75/0.50/0.25`.
 
-**Axes note:** shipped defaults enable `structure` / `rna_blastn` / `literature` with AFDB preferred; **AF3 fallback is on** (`use_af3` / `use_af3_fallback`) when AFDB misses — probe failure surfaces a caveat, never similarity `0`. Default cross-donor aggregate is `weighted` (proposal §4).
+**Axes note:** shipped defaults enable `structure` / `rna_blastn` / `literature` with AFDB preferred; **AF3 fallback is on** (`use_af3` / `use_af3_fallback`) when AFDB misses — probe failure sur[...]
 
 ---
 
@@ -109,9 +109,53 @@ Defaults (Table 3 / `config/defaults.yaml`): `n_cand=5`, `tau_drop=0.30`, near-m
 
 ## 6. Install
 
+### 6.1 Clone repository
+
+#### Using HTTPS (recommended for initial setup)
 ```bash
-cd nanobot-bio
-# Full science stack (AF3 harden may mark deferred/broken on some GPUs; ≠ App failure):
+git clone https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+#### Using SSH (requires pre-configured SSH keys)
+```bash
+git clone git@github.com:JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+#### Using GitHub CLI (requires `gh` installed)
+```bash
+gh repo clone JoeSun-421/rbp-nanobot-bio
+cd rbp-nanobot-bio
+```
+
+#### Specify a particular branch (e.g., develop)
+```bash
+git clone --branch develop https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+#### Specify a release tag (e.g., v0.5.1)
+```bash
+git clone --branch v0.5.1 https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+#### Shallow clone (download latest commit only, faster)
+```bash
+git clone --depth 1 https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+#### Shallow clone specific branch
+```bash
+git clone --branch main --depth 1 https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+```
+
+### 6.2 Install dependencies
+
+```bash
 bash scripts/setup_all.sh
 # Faster agent-focused install:
 # bash scripts/setup_all.sh --skip-af3
@@ -148,7 +192,7 @@ Environment variables (typical):
 
 Reports: repo `artifacts/reports/` (or `~/.nanobot-bio/artifacts/reports/` when overridden).
 
-**Acceptance authority:** `nanobot-bio accept-golden` is the authoritative acceptance path for collaborators — it wraps and extends the delivery-native smoke assertions. `rhobind_agent_delivery/agent/examples/run_example.sh` is a delivery-only regression smoke (exercises delivery scripts directly, no app layer) and is **not** part of app acceptance; use it only when debugging a single delivery tool.
+**Acceptance authority:** `nanobot-bio accept-golden` is the authoritative acceptance path for collaborators — it wraps and extends the delivery-native smoke assertions. `rhobind_agent_delivery[...]
 
 ```bash
 nanobot-bio doctor
