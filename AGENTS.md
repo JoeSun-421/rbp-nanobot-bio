@@ -14,6 +14,7 @@ Executable gates: [`docs/工程指南.zh.md`](docs/工程指南.zh.md) §9. Chat
 - Add a third tools tree. Edit only `nanobot/` SoT; workspace skill is a sync copy.
 - Give mock RNA-FM fusion weight (`rna_embed` / `rna_fm` stay 0 until a real `RNA_FM_CHECKPOINT`).
 - Commit API keys, `.env`, or `~/.nanobot/config.json`.
+- Commit or push `docs/` to GitHub (`docs/` is local-only; keep proposal/checklists off the remote).
 - Import science torch into the nanobot process; keep conda/subprocess isolation.
 - Introduce LangGraph/CrewAI/AutoGen as product dependencies.
 

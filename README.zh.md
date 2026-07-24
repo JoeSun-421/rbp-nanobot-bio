@@ -11,11 +11,9 @@
 | 文档 | 路径 | 用途 |
 |------|------|------|
 | 本 README | 仓根 | 安装、运行、验收（Delivery / 用户） |
-| 提案 EN/ZH | [`docs/proposal.md`](docs/proposal.md) · [`docs/proposal.zh.md`](docs/proposal.zh.md) | 任务、阶段、表 2–3 |
-| Delivery 要求镜像 | [`docs/delivery要求.zh.md`](docs/delivery要求.zh.md) | BUILD_SPEC / HANDOFF / registry 对照 |
-| 整改清单 | [`docs/整改清单.zh.md`](docs/整改清单.zh.md) · [`docs/remediation-checklist.md`](docs/remediation-checklist.md) | 要求 × 实现矩阵 |
+| 提案 / delivery 镜像 / 清单 | `docs/`（**仅本地**，不上 GitHub） | 任务、阶段、BUILD_SPEC — 线下分发 |
 
-> `docs/` 默认本地（gitignore，`docs/worklog/` 除外）。交付方需要时单独提供副本。工具清单权威：`$DELIVERY_ROOT/agent/tools/registry.json`。
+> 工具清单权威：`$DELIVERY_ROOT/agent/tools/registry.json`。
 
 ---
 
@@ -214,7 +212,7 @@ pytest tests/test_proposal_compliance.py -q
 
 ## 9. 符合性摘要
 
-完整矩阵见 [`docs/整改清单.zh.md`](docs/整改清单.zh.md)。
+完整矩阵见本地 `docs/整改清单.zh.md`（不上 GitHub）。
 
 | 项 | 相对提案 / Delivery |
 |----|---------------------|
