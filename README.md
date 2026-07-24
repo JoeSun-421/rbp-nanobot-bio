@@ -3,10 +3,10 @@
 
   <h1>nanobot-bio</h1>
 
-  <p><b>RNA–RBP interaction prediction agent</b></p>
+  <p><b>Predict whether an RNA binds an RBP — and how strongly.</b></p>
   <p>
-    Ask whether an RNA binds an RBP.<br/>
-    Built on <a href="https://github.com/HKUDS/nanobot">Nanobot</a> · scores from a science tool bundle via a read-only bridge.
+    An agent built on <a href="https://github.com/HKUDS/nanobot">Nanobot</a>.<br/>
+    Binding scores come from a separate science tool bundle.
   </p>
 
   <p>
@@ -17,13 +17,12 @@
   </p>
 
   <p>
-    <a href="#-idea">Idea</a> ·
-    <a href="#-clone">Clone</a> ·
-    <a href="#-install">Install</a> ·
-    <a href="#-run">Run</a> ·
-    <a href="#-what-you-get">What you get</a> ·
-    <a href="#-layout">Layout</a> ·
-    <a href="#-more-help">Help</a>
+    <a href="#about">About</a> ·
+    <a href="#what-we-built">What we built</a> ·
+    <a href="#get-started">Get started</a> ·
+    <a href="#output">Output</a> ·
+    <a href="#layout">Layout</a> ·
+    <a href="#more">More</a>
   </p>
 
   <p><b>English</b> · <a href="README.zh.md">中文</a></p>
@@ -31,122 +30,88 @@
 
 ---
 
-## 🔬 Idea
+## About
 
-**Biology.** Many RNA-binding proteins (RBPs) recognize RNA through related sequence motifs, folds, and domains. If a query RBP is close to proteins we already know how to score, we can **transfer** that knowledge: find similar donors, reuse their predictors, then combine evidence into one binding call.
+RNA-binding proteins (RBPs) often share related sequence and structure patterns. When a new RBP looks like ones we already know how to score, we can find those neighbors, reuse their predictors, and combine the evidence into one binding call.
 
-**What we built.** `nanobot-bio` is the agent that does this end to end:
-
-1. **Resolve** the target RBP and decide the path — known panel head, near-homolog, or fully unseen.
-2. **Retrieve** similar RBPs with sequence and structure signals.
-3. **Predict** binding with the science stack on the right donors.
-4. **Integrate** donor scores into a single JSON verdict with a short explanation.
-
-The LLM plans which tools to call and writes the explanation. **Numeric scores always come from the science tools**, not from the model inventing probabilities.
+`nanobot-bio` turns that idea into a small command-line agent: you ask in natural language, it runs the retrieval and scoring tools, and it returns a structured answer.
 
 ---
 
-## 📦 Clone
+## What we built
 
-| Command | Meaning |
-|---------|---------|
-| `git clone https://github.com/JoeSun-421/rbp-nanobot-bio.git` | Download this project from GitHub over HTTPS |
-| `cd rbp-nanobot-bio` | Enter the project folder |
+- A chat / one-shot CLI (`nanobot-bio agent`, `nanobot-bio chat`) for RNA–RBP questions
+- Automatic lookup of similar RBPs and binding scores from the science tool bundle (`rhobind_agent_delivery`)
+- A JSON verdict with a short explanation
+- Clear split: the LLM plans and explains; numbers come from the science tools
 
-Place the science bundle **next to** this repo:
-
-```text
-your_workspace/
-├── rbp-nanobot-bio/            ← this project
-└── rhobind_agent_delivery/     ← science data & tools
-```
+You need the science bundle as a **sibling** directory of this repo (not inside it).
 
 ---
 
-## ⚙️ Install
-
-| Command | Meaning |
-|---------|---------|
-| `bash scripts/setup_all.sh` | Create the Python environment, install dependencies, wire paths to the science bundle |
-| `source .venv/bin/activate` | Activate that environment so `nanobot-bio` is on your PATH |
-| `nanobot-bio onboard` | Interactive setup: pick an LLM provider and save your API key locally |
-| `nanobot-bio doctor` | Self-check: delivery paths, registry, skill sync, and basic readiness |
-
-Need a lighter install, Docker, or the full env table? See [`INSTALL.md`](INSTALL.md).
-
----
-
-## 🚀 Run
-
-| Command | Meaning |
-|---------|---------|
-| `nanobot-bio agent --message "..."` | One-shot run: send one question, get one JSON verdict, then exit |
-| `nanobot-bio chat` | Multi-turn terminal chat with the same agent |
-
-Example:
+## Get started
 
 ```bash
-nanobot-bio agent --message "Does this RNA interact with RBP PTBP1? RNA: <your_sequence>"
-nanobot-bio chat
+git clone https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+
+# expected layout:
+#   parent/
+#     rbp-nanobot-bio/
+#     rhobind_agent_delivery/
+
+bash scripts/setup_all.sh      # create env and install deps
+source .venv/bin/activate
+nanobot-bio onboard            # choose LLM provider + API key
+nanobot-bio doctor             # check that paths look sane
+nanobot-bio chat               # interactive
+# nanobot-bio agent --message "Does this RNA interact with RBP PTBP1? RNA: AUCG..."
 ```
 
-### Chat slash commands
+In chat: `/help` `/status` `/tools` `/new` `/quit`
 
-| Command | Meaning |
-|---------|---------|
-| `/help` | Show available slash commands |
-| `/status` | Show current model, tools, and session |
-| `/tools` | List tools the agent can call |
-| `/new` | Start a fresh session |
-| `/quit` | Leave chat |
+Docker, lighter installs, and the full environment list live in [`INSTALL.md`](INSTALL.md).
 
 ---
 
-## ✨ What you get
+## Output
 
-| Piece | Role |
-|-------|------|
-| **Agent** | Plans tool calls and returns a JSON answer |
-| **Tools** | Sequence / structure / function lookup & prediction |
-| **Science stack** | Binding scores from `rhobind_agent_delivery` |
-
-Typical answer fields: `label`, `confidence`, `p_hat`, `explanation`, `supporting_rbps`.
+Answers are JSON. Typical fields: `label`, `confidence`, `p_hat`, `explanation`, `supporting_rbps`.
 
 ---
 
-## 📁 Layout
+## Layout
 
 ```text
 nanobot-bio/
-├── app/          CLI & app shell
-├── nanobot/      Agent runtime + RBP tools
-├── config/       Default settings
+├── app/          CLI and app shell
+├── nanobot/      Agent runtime and RBP tools
+├── config/       Defaults
 ├── scripts/      setup_all.sh
-├── tests/        Automated tests
+├── tests/        Tests
 ├── workspace/    Agent workspace
-└── artifacts/    Local logs & reports
+└── artifacts/    Local logs and reports
 ```
 
 ---
 
-## 🆘 More help
+## More
 
-| Doc | When to open it |
-|-----|-----------------|
+| Doc | Use it for |
+|-----|------------|
 | [INSTALL.md](INSTALL.md) | Full setup, env vars, Docker |
-| [CHANGELOG.md](CHANGELOG.md) | What changed by version |
-| [RELEASE.md](RELEASE.md) | Cutting a release |
+| [CHANGELOG.md](CHANGELOG.md) | Version history |
 
 ```bash
-nanobot-bio doctor          # self-check when something looks wrong
-python -m pytest -q         # run the automated test suite quietly
+nanobot-bio doctor    # first check when something fails
+python -m pytest -q   # run tests
 ```
 
 ---
 
 <div align="center">
 
-Agent runtime derived from <a href="https://github.com/HKUDS/nanobot">HKUDS/nanobot</a>.<br/>
-Science tools provided by <code>rhobind_agent_delivery</code>.
+Built with <a href="https://github.com/HKUDS/nanobot">HKUDS/nanobot</a>.<br/>
+Science tools from <code>rhobind_agent_delivery</code>.
 
 </div>

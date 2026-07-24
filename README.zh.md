@@ -3,10 +3,10 @@
 
   <h1>nanobot-bio</h1>
 
-  <p><b>RNA–RBP 结合预测 Agent</b></p>
+  <p><b>给定 RNA 和 RBP，判断是否结合、结合有多强。</b></p>
   <p>
-    输入 RNA 与 RBP，得到是否结合的判定。<br/>
-    编排基于 <a href="https://github.com/HKUDS/nanobot">Nanobot</a>；结合分数来自科学工具包。
+    基于 <a href="https://github.com/HKUDS/nanobot">Nanobot</a> 的命令行 Agent。<br/>
+    结合分数由旁边的科学工具包计算。
   </p>
 
   <p>
@@ -17,13 +17,12 @@
   </p>
 
   <p>
-    <a href="#-原理与实现">原理与实现</a> ·
-    <a href="#-克隆">克隆</a> ·
-    <a href="#-安装">安装</a> ·
-    <a href="#-使用">使用</a> ·
-    <a href="#-你会得到什么">你会得到什么</a> ·
-    <a href="#-目录">目录</a> ·
-    <a href="#-更多说明">更多说明</a>
+    <a href="#这个项目做什么">这个项目做什么</a> ·
+    <a href="#我们做了什么">我们做了什么</a> ·
+    <a href="#快速开始">快速开始</a> ·
+    <a href="#输出长什么样">输出</a> ·
+    <a href="#目录">目录</a> ·
+    <a href="#更多">更多</a>
   </p>
 
   <p><a href="README.md">English</a> · <b>中文</b></p>
@@ -31,124 +30,88 @@
 
 ---
 
-## 🔬 原理与实现
+## 这个项目做什么
 
-**科学直觉。** RNA 结合蛋白（RBP）往往通过相近的序列 motif、结构与结构域识别 RNA。若查询 RBP 与已有「会打分」的蛋白足够相近，就可以做**知识迁移**：找到相似供体、复用其预测头，再把多路证据合成一次结合判定。
+RNA 结合蛋白（RBP）常常长得比较像：相似的序列、结构、结构域，往往也会识别相近的 RNA。对新来的 RBP，如果能在已有蛋白里找到邻居，就可以借用它们的预测结果，再综合成一次结合判断。
 
-**我们实现了什么。** `nanobot-bio` 把这件事做成可用的 Agent 产品：
-
-1. **识别靶标**：判断是目录内已知 head、近同源，还是全新未见蛋白。
-2. **检索供体**：用序列与结构相似度找出可借用的 RBP。
-3. **借头预测**：调用科学工具包，在合适供体上得到结合分数。
-4. **整合输出**：汇总为一条 JSON 结论，并附简短解释。
-
-LLM 负责选工具、排步骤、写说明；**数值分数只来自科学工具**，不会由模型凭空编造概率。
+这个仓库把上述流程做成一个能直接用的 Agent：你用自然语言提问，它去检索、打分，最后给你一条结构化结论。
 
 ---
 
-## 📦 克隆
+## 我们做了什么
 
-| 命令 | 含义 |
-|------|------|
-| `git clone https://github.com/JoeSun-421/rbp-nanobot-bio.git` | 用 HTTPS 从 GitHub 下载本项目 |
-| `cd rbp-nanobot-bio` | 进入项目目录 |
+- 提供 `nanobot-bio agent` / `chat`，用一句话或对话问 RNA–RBP 问题
+- 自动找相似 RBP，并调用科学工具包 `rhobind_agent_delivery` 算结合分数
+- 输出带简短说明的 JSON 结论
+- 分工清楚：LLM 负责选步骤和写解释，数字来自科学工具
 
-科学数据包和本项目放在**同一层**，不要放进本仓库里面：
-
-```text
-你的工作目录/
-├── rbp-nanobot-bio/            ← 本项目
-└── rhobind_agent_delivery/     ← 科学数据与工具
-```
-
-直连 GitHub 较慢时，可先开代理 / 镜像，再对同一 HTTPS 地址执行 `git clone`。
+使用前请把科学工具包放在与本仓库**同级**的目录，不要拷进本仓库里。
 
 ---
 
-## ⚙️ 安装
-
-| 命令 | 含义 |
-|------|------|
-| `bash scripts/setup_all.sh` | 创建 Python 环境、安装依赖，并接好科学工具包路径 |
-| `source .venv/bin/activate` | 激活虚拟环境，之后才能直接运行 `nanobot-bio` |
-| `nanobot-bio onboard` | 交互配置：选择 LLM 厂商，把 API key 存到本机 |
-| `nanobot-bio doctor` | 自检：路径、registry、skill、环境是否就绪 |
-
-需要跳过 AF3、只用 Docker，或查看完整环境变量时，打开 [`INSTALL.md`](INSTALL.md)。
-
----
-
-## 🚀 使用
-
-| 命令 | 含义 |
-|------|------|
-| `nanobot-bio agent --message "..."` | 一次性提问：发一句话，拿一条 JSON 结论后退出 |
-| `nanobot-bio chat` | 多轮终端对话，同一套 Agent |
-
-示例：
+## 快速开始
 
 ```bash
-nanobot-bio agent --message "Does this RNA interact with RBP PTBP1? RNA: <你的序列>"
-nanobot-bio chat
+git clone https://github.com/JoeSun-421/rbp-nanobot-bio.git
+cd rbp-nanobot-bio
+
+# 期望目录：
+#   上级目录/
+#     rbp-nanobot-bio/
+#     rhobind_agent_delivery/
+
+bash scripts/setup_all.sh      # 建环境、装依赖
+source .venv/bin/activate
+nanobot-bio onboard            # 配置 LLM 与 API key
+nanobot-bio doctor             # 检查路径是否正常
+nanobot-bio chat               # 进入对话
+# nanobot-bio agent --message "Does this RNA interact with RBP PTBP1? RNA: AUCG..."
 ```
 
-### 对话里的斜杠命令
+对话里可用：`/help` `/status` `/tools` `/new` `/quit`
 
-| 命令 | 含义 |
-|------|------|
-| `/help` | 查看可用斜杠命令 |
-| `/status` | 查看当前模型、工具与会话 |
-| `/tools` | 列出 Agent 可调用的工具 |
-| `/new` | 开一个新会话 |
-| `/quit` | 退出对话 |
+Docker、精简安装和完整环境变量见 [`INSTALL.md`](INSTALL.md)。GitHub 较慢时先开代理或镜像，再对同一 HTTPS 地址 `git clone`。
 
 ---
 
-## ✨ 你会得到什么
+## 输出长什么样
 
-| 部分 | 作用 |
-|------|------|
-| **Agent** | 自动选工具、组织步骤，给出 JSON 结论 |
-| **Tools** | 序列 / 结构 / 功能相关查询与预测 |
-| **科学栈** | 结合分数来自 `rhobind_agent_delivery` |
-
-常见返回字段：`label`、`confidence`、`p_hat`、`explanation`、`supporting_rbps`。
+结果是 JSON，常见字段：`label`、`confidence`、`p_hat`、`explanation`、`supporting_rbps`。
 
 ---
 
-## 📁 目录
+## 目录
 
 ```text
 nanobot-bio/
 ├── app/          命令行与应用壳
 ├── nanobot/      Agent runtime 与 RBP 工具
 ├── config/       默认配置
-├── scripts/      setup_all.sh 等安装脚本
-├── tests/        自动化测试
+├── scripts/      setup_all.sh
+├── tests/        测试
 ├── workspace/    Agent 工作区
 └── artifacts/    本地日志与报告
 ```
 
 ---
 
-## 🆘 更多说明
+## 更多
 
-| 文档 | 什么时候看 |
-|------|------------|
+| 文档 | 用途 |
+|------|------|
 | [INSTALL.md](INSTALL.md) | 完整安装、环境变量、Docker |
-| [CHANGELOG.md](CHANGELOG.md) | 各版本改了什么 |
-| [RELEASE.md](RELEASE.md) | 如何发版 |
+| [CHANGELOG.md](CHANGELOG.md) | 版本记录 |
 
 ```bash
-nanobot-bio doctor    # 出问题先自检
-python -m pytest -q   # 静默跑自动化测试
+nanobot-bio doctor    # 出问题先跑
+python -m pytest -q   # 跑测试
 ```
 
 ---
 
 <div align="center">
 
-Agent runtime 来自 <a href="https://github.com/HKUDS/nanobot">HKUDS/nanobot</a>。<br/>
-科学工具由 <code>rhobind_agent_delivery</code> 提供。
+基于 <a href="https://github.com/HKUDS/nanobot">HKUDS/nanobot</a> 构建。<br/>
+科学工具来自 <code>rhobind_agent_delivery</code>。
 
 </div>
